@@ -37,3 +37,4 @@ dist-ssr
 .devcontainer/data
 .devcontainer/postgresql_data
 *.mp3
+apps/frontend/destop/src-tauri/target/*

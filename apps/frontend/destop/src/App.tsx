@@ -1,19 +1,34 @@
-import type { Track, TrackListResponse } from '@baize/types'
+﻿import type { Track } from '@baize/types'
 import type { LyricLine } from '@baize/utils'
 import { formatTime, parseLrc } from '@baize/utils'
+import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import {
+    Copy,
+    Download,
+    FolderOpen,
+    ListMusic,
+    Minus,
+    Pause,
+    Play,
+    Repeat,
+    Repeat1,
+    Shuffle,
+    SkipBack,
+    SkipForward,
+    Square,
+    Volume2,
+    VolumeX,
+    X,
+} from 'lucide-react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 const VOLUME_STORAGE_KEY = 'baize_player_volume'
-const ICON_PREV = '\u23EE'
-const ICON_PLAY = '\u25B6'
-const ICON_PAUSE = '\u23F8'
-const ICON_NEXT = '\u23ED'
-const ICON_DOWNLOAD = '\u2B07'
-const ICON_LIST = '\u2630'
-const ICON_MUTE = '\u{1F507}'
-const ICON_VOLUME = '\u{1F50A}'
+const DESKTOP_MUSIC_DIRS_KEY = 'baize_desktop_music_dirs'
+
+type PlayMode = 'sequential' | 'random' | 'single'
 
 interface TrackContextMenu {
     x: number
@@ -22,13 +37,15 @@ interface TrackContextMenu {
     index: number
 }
 
-type PlayMode = 'sequential' | 'random' | 'single'
-
-function withApiBase(url: string): string {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url
-    }
-    return url
+interface DesktopScannedTrack {
+    id: string
+    title: string
+    artist: string
+    album: string
+    duration: number
+    filePath: string
+    coverPath?: string
+    lyricPath?: string
 }
 
 function readStoredVolume(): number {
@@ -43,16 +60,44 @@ function readStoredVolume(): number {
     return Math.max(0, Math.min(1, parsed))
 }
 
+function readStoredMusicDirs(): string[] {
+    const raw = window.localStorage.getItem(DESKTOP_MUSIC_DIRS_KEY)
+    if (!raw) {
+        return []
+    }
+    try {
+        const parsed = JSON.parse(raw) as unknown
+        if (!Array.isArray(parsed)) {
+            return []
+        }
+        return parsed
+            .filter((item): item is string => typeof item === 'string')
+            .map(item => item.trim())
+            .filter(item => item.length > 0)
+    } catch {
+        return []
+    }
+}
+
+function saveMusicDirs(dirs: string[]) {
+    const normalized = dirs.map(dir => dir.trim()).filter(dir => dir.length > 0)
+    window.localStorage.setItem(DESKTOP_MUSIC_DIRS_KEY, JSON.stringify(normalized))
+}
+
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value))
 }
 
 export default function App() {
+    const desktopMode = isTauri()
     const audioRef = useRef<HTMLAudioElement>(null)
     const lyricListRef = useRef<HTMLDivElement>(null)
     const contextMenuRef = useRef<HTMLDivElement>(null)
     const playlistPopoverRef = useRef<HTMLDivElement>(null)
     const playlistToggleRef = useRef<HTMLButtonElement>(null)
+    const pathPanelRef = useRef<HTMLDivElement>(null)
+    const pathPanelToggleRef = useRef<HTMLButtonElement>(null)
+
     const [duration, setDuration] = useState(0)
     const [currentTime, setCurrentTime] = useState(0)
     const [volume, setVolume] = useState(1)
@@ -71,9 +116,12 @@ export default function App() {
     const [isPlaylistOpen, setIsPlaylistOpen] = useState(false)
     const [contextMenu, setContextMenu] = useState<TrackContextMenu | null>(null)
     const [playMode, setPlayMode] = useState<PlayMode>('sequential')
+    const [isPathMenuOpen, setIsPathMenuOpen] = useState(false)
+    const [musicDirs, setMusicDirs] = useState<string[]>(() => readStoredMusicDirs())
+    const [musicDirInput, setMusicDirInput] = useState('')
+    const [isWindowMaximized, setIsWindowMaximized] = useState(false)
 
     const currentTrack = tracks[currentIndex]
-
     const trackMap = useMemo(() => new Map(tracks.map((track, index) => [track.id, { track, index }])), [tracks])
     const allTrackIds = useMemo(() => tracks.map(track => track.id), [tracks])
     const effectiveQueueIds = useMemo(() => (playlistTrackIds.length > 0 ? playlistTrackIds : allTrackIds), [playlistTrackIds, allTrackIds])
@@ -93,28 +141,71 @@ export default function App() {
     }, [])
 
     useEffect(() => {
+        setPlaylistTrackIds(prev => prev.filter(trackId => trackMap.has(trackId)))
+    }, [trackMap])
+
+    useEffect(() => {
         let cancelled = false
 
         async function loadTracks() {
             setIsLoading(true)
             setError(null)
             try {
-                const response = await fetch('/api/tracks')
-                if (!response.ok) {
-                    throw new Error(`request failed with status ${response.status}`)
+                let serverTracks: Track[] = []
+                let serverError: string | null = null
+                let localTracks: Track[] = []
+                let localError: string | null = null
+
+                try {
+                    const response = await fetch('/api/tracks')
+                    if (!response.ok) {
+                        throw new Error(`请求失败，状态码: ${response.status}`)
+                    }
+                    const payload = (await response.json()) as { tracks: Track[] }
+                    serverTracks = payload.tracks ?? []
+                } catch (err: unknown) {
+                    serverError = err instanceof Error ? err.message : '服务器歌曲加载失败'
                 }
-                const data = (await response.json()) as TrackListResponse
-                if (cancelled) {
-                    return
+
+                if (desktopMode && musicDirs.length > 0) {
+                    try {
+                        const scanned = await invoke<DesktopScannedTrack[]>('scan_music_dirs', {
+                            musicDirs,
+                        })
+                        localTracks = scanned.map(item => ({
+                            id: item.id,
+                            title: item.title,
+                            artist: item.artist,
+                            album: item.album,
+                            duration: item.duration,
+                            streamUrl: convertFileSrc(item.filePath),
+                            coverUrl: item.coverPath ? convertFileSrc(item.coverPath) : undefined,
+                            lyricUrl: item.lyricPath ? convertFileSrc(item.lyricPath) : undefined,
+                        }))
+                    } catch (err: unknown) {
+                        localError = err instanceof Error ? err.message : '本地目录扫描失败'
+                    }
                 }
-                setTracks(data.tracks ?? [])
-                setCurrentIndex(0)
+
+                const mergedTracks = [...serverTracks, ...localTracks]
+                if (!cancelled) {
+                    setTracks(mergedTracks)
+                    setCurrentIndex(0)
+                    if (mergedTracks.length === 0) {
+                        setError(serverError ?? localError)
+                    } else if (serverError && localTracks.length > 0) {
+                        setError(`服务器歌曲加载失败，当前显示本地目录歌曲：${serverError}`)
+                    } else if (localError && serverTracks.length > 0) {
+                        setError(`本地目录扫描失败，当前显示服务器歌曲：${localError}`)
+                    } else {
+                        setError(null)
+                    }
+                }
             } catch (err: unknown) {
-                if (cancelled) {
-                    return
+                if (!cancelled) {
+                    const message = err instanceof Error ? err.message : '加载音乐失败'
+                    setError(message)
                 }
-                const message = err instanceof Error ? err.message : 'failed to load tracks'
-                setError(message)
             } finally {
                 if (!cancelled) {
                     setIsLoading(false)
@@ -126,11 +217,7 @@ export default function App() {
         return () => {
             cancelled = true
         }
-    }, [])
-
-    useEffect(() => {
-        setPlaylistTrackIds(prev => prev.filter(trackId => trackMap.has(trackId)))
-    }, [trackMap])
+    }, [desktopMode, musicDirs])
 
     useEffect(() => {
         setCoverFailed(false)
@@ -150,22 +237,20 @@ export default function App() {
             setLyricLoading(true)
             setLyricError(null)
             try {
-                const response = await fetch(withApiBase(currentTrack.lyricUrl))
+                const response = await fetch(currentTrack.lyricUrl)
                 if (!response.ok) {
-                    throw new Error(`request failed with status ${response.status}`)
+                    throw new Error(`歌词请求失败，状态码: ${response.status}`)
                 }
                 const text = await response.text()
-                if (cancelled) {
-                    return
+                if (!cancelled) {
+                    setLyricLines(parseLrc(text))
                 }
-                setLyricLines(parseLrc(text))
             } catch (err: unknown) {
-                if (cancelled) {
-                    return
+                if (!cancelled) {
+                    const message = err instanceof Error ? err.message : '加载歌词失败'
+                    setLyricError(message)
+                    setLyricLines([])
                 }
-                const message = err instanceof Error ? err.message : 'failed to load lyric'
-                setLyricError(message)
-                setLyricLines([])
             } finally {
                 if (!cancelled) {
                     setLyricLoading(false)
@@ -184,15 +269,12 @@ export default function App() {
         if (!audio || !currentTrack) {
             return
         }
-
-        audio.src = withApiBase(currentTrack.streamUrl)
+        audio.src = currentTrack.streamUrl
         setCurrentTime(0)
         setDuration(0)
         audio.load()
         if (isPlaying) {
-            void audio.play().catch(() => {
-                setIsPlaying(false)
-            })
+            void audio.play().catch(() => setIsPlaying(false))
         }
     }, [currentTrack, isPlaying])
 
@@ -201,38 +283,31 @@ export default function App() {
         if (!audio) {
             return
         }
-
         if (!isPlaying) {
             audio.pause()
             return
         }
-
-        void audio.play().catch(() => {
-            setIsPlaying(false)
-        })
+        void audio.play().catch(() => setIsPlaying(false))
     }, [isPlaying])
 
     useEffect(() => {
         const audio = audioRef.current
-        if (!audio) {
-            return
+        if (audio) {
+            audio.volume = volume
         }
-        audio.volume = volume
     }, [volume])
 
     useEffect(() => {
         const audio = audioRef.current
-        if (!audio) {
-            return
+        if (audio) {
+            audio.muted = isMuted
         }
-        audio.muted = isMuted
     }, [isMuted])
 
     useEffect(() => {
         if (!contextMenu) {
             return
         }
-
         const close = () => setContextMenu(null)
         const closeWhenClickOutside = (event: MouseEvent) => {
             const target = event.target as Node | null
@@ -261,34 +336,69 @@ export default function App() {
         if (!isPlaylistOpen) {
             return
         }
-
         const closeWhenClickOutside = (event: MouseEvent) => {
             const target = event.target as Node | null
             const inPopover = !!(playlistPopoverRef.current && target && playlistPopoverRef.current.contains(target))
             const inToggle = !!(playlistToggleRef.current && target && playlistToggleRef.current.contains(target))
-            if (inPopover || inToggle) {
-                return
-            }
-            setIsPlaylistOpen(false)
-        }
-
-        const closeOnEsc = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
+            if (!inPopover && !inToggle) {
                 setIsPlaylistOpen(false)
             }
         }
-
         window.addEventListener('mousedown', closeWhenClickOutside)
-        window.addEventListener('keydown', closeOnEsc)
-        return () => {
-            window.removeEventListener('mousedown', closeWhenClickOutside)
-            window.removeEventListener('keydown', closeOnEsc)
-        }
+        return () => window.removeEventListener('mousedown', closeWhenClickOutside)
     }, [isPlaylistOpen])
 
+    useEffect(() => {
+        if (!isPathMenuOpen) {
+            return
+        }
+        const closeWhenClickOutside = (event: MouseEvent) => {
+            const target = event.target as Node | null
+            const inPanel = !!(pathPanelRef.current && target && pathPanelRef.current.contains(target))
+            const inToggle = !!(pathPanelToggleRef.current && target && pathPanelToggleRef.current.contains(target))
+            if (!inPanel && !inToggle) {
+                setIsPathMenuOpen(false)
+            }
+        }
+        window.addEventListener('mousedown', closeWhenClickOutside)
+        return () => window.removeEventListener('mousedown', closeWhenClickOutside)
+    }, [isPathMenuOpen])
+
+    useEffect(() => {
+        if (!desktopMode) {
+            return
+        }
+
+        const win = getCurrentWindow()
+        let unlisten: (() => void) | undefined
+
+        const syncMaximizedState = async () => {
+            try {
+                setIsWindowMaximized(await win.isMaximized())
+            } catch {
+                setIsWindowMaximized(false)
+            }
+        }
+
+        void syncMaximizedState()
+        void win
+            .onResized(() => {
+                void syncMaximizedState()
+            })
+            .then(fn => {
+                unlisten = fn
+            })
+
+        return () => {
+            if (unlisten) {
+                unlisten()
+            }
+        }
+    }, [desktopMode])
+
     const canPlay = tracks.length > 0
-    const canPrev = useMemo(() => canPlay && effectiveQueueIds.length > 0, [canPlay, effectiveQueueIds.length])
-    const canNext = useMemo(() => canPlay && effectiveQueueIds.length > 0, [canPlay, effectiveQueueIds.length])
+    const canPrev = canPlay && effectiveQueueIds.length > 0
+    const canNext = canPlay && effectiveQueueIds.length > 0
 
     const activeLyricIndex = useMemo(() => {
         if (lyricLines.length === 0) {
@@ -311,13 +421,9 @@ export default function App() {
             return
         }
         const activeNode = container.querySelector<HTMLParagraphElement>(`[data-lyric-index="${activeLyricIndex}"]`)
-        if (!activeNode) {
-            return
+        if (activeNode) {
+            activeNode.scrollIntoView({ block: 'center', behavior: 'smooth' })
         }
-        activeNode.scrollIntoView({
-            block: 'center',
-            behavior: 'smooth',
-        })
     }, [activeLyricIndex])
 
     const playTrackByIndex = (index: number) => {
@@ -326,7 +432,7 @@ export default function App() {
     }
 
     const downloadTrack = (track: Track) => {
-        window.open(withApiBase(`/api/tracks/${track.id}/download`), '_blank', 'noopener,noreferrer')
+        window.open(track.streamUrl, '_blank', 'noopener,noreferrer')
     }
 
     const addTrackToPlaylist = (track: Track) => {
@@ -340,41 +446,6 @@ export default function App() {
         }
         playTrackByIndex(item.index)
         setIsPlaylistOpen(false)
-    }
-
-    const onTrackContextMenu = (event: ReactMouseEvent, track: Track, index: number) => {
-        event.preventDefault()
-        const menuWidth = 210
-        const menuHeight = 132
-        const x = clamp(event.clientX, 8, window.innerWidth - menuWidth - 8)
-        const y = clamp(event.clientY, 8, window.innerHeight - menuHeight - 8)
-        setContextMenu({
-            x,
-            y,
-            trackId: track.id,
-            index,
-        })
-    }
-
-    const onTogglePlay = () => {
-        if (!canPlay) {
-            return
-        }
-        setIsPlaying(prev => !prev)
-    }
-
-    const onPrev = () => {
-        if (!canPrev) {
-            return
-        }
-        const prevCursor =
-            queueCursor < 0 ? effectiveQueueIds.length - 1 : (queueCursor - 1 + effectiveQueueIds.length) % effectiveQueueIds.length
-        const prevTrackId = effectiveQueueIds[prevCursor]
-        const prevTrack = prevTrackId ? trackMap.get(prevTrackId) : undefined
-        if (!prevTrack) {
-            return
-        }
-        playTrackByIndex(prevTrack.index)
     }
 
     const resolveNextTrackIndex = (): number | null => {
@@ -398,8 +469,7 @@ export default function App() {
             }
             const withoutCurrent = candidates.filter(index => index !== currentIndex)
             const pool = withoutCurrent.length > 0 ? withoutCurrent : candidates
-            const randomIndex = Math.floor(Math.random() * pool.length)
-            return pool[randomIndex] ?? null
+            return pool[Math.floor(Math.random() * pool.length)] ?? null
         }
 
         const nextCursor = queueCursor < 0 ? 0 : (queueCursor + 1) % effectiveQueueIds.length
@@ -408,22 +478,48 @@ export default function App() {
         return nextTrack ? nextTrack.index : null
     }
 
+    const onTrackContextMenu = (event: ReactMouseEvent, track: Track, index: number) => {
+        event.preventDefault()
+        const menuWidth = 210
+        const menuHeight = 132
+        setContextMenu({
+            x: clamp(event.clientX, 8, window.innerWidth - menuWidth - 8),
+            y: clamp(event.clientY, 8, window.innerHeight - menuHeight - 8),
+            trackId: track.id,
+            index,
+        })
+    }
+
+    const onTogglePlay = () => {
+        if (canPlay) {
+            setIsPlaying(prev => !prev)
+        }
+    }
+
+    const onPrev = () => {
+        if (!canPrev) {
+            return
+        }
+        const prevCursor =
+            queueCursor < 0 ? effectiveQueueIds.length - 1 : (queueCursor - 1 + effectiveQueueIds.length) % effectiveQueueIds.length
+        const prevTrackId = effectiveQueueIds[prevCursor]
+        const prevTrack = prevTrackId ? trackMap.get(prevTrackId) : undefined
+        if (prevTrack) {
+            playTrackByIndex(prevTrack.index)
+        }
+    }
+
     const onNext = () => {
         if (!canNext) {
             return
         }
         const nextIndex = resolveNextTrackIndex()
-        if (nextIndex === null) {
-            return
+        if (nextIndex !== null) {
+            playTrackByIndex(nextIndex)
         }
-        playTrackByIndex(nextIndex)
     }
 
     const onEnded = () => {
-        if (!canNext) {
-            setIsPlaying(false)
-            return
-        }
         const nextIndex = resolveNextTrackIndex()
         if (nextIndex === null) {
             setIsPlaying(false)
@@ -433,33 +529,17 @@ export default function App() {
     }
 
     const onTogglePlayMode = () => {
-        setPlayMode(prev => {
-            if (prev === 'sequential') {
-                return 'random'
-            }
-            if (prev === 'random') {
-                return 'single'
-            }
-            return 'sequential'
-        })
+        setPlayMode(prev => (prev === 'sequential' ? 'random' : prev === 'random' ? 'single' : 'sequential'))
     }
 
-    const playModeLabel = useMemo(() => {
-        if (playMode === 'random') {
-            return '随机'
-        }
-        if (playMode === 'single') {
-            return '单曲'
-        }
-        return '顺序'
-    }, [playMode])
+    const playModeLabel = playMode === 'random' ? '随机播放' : playMode === 'single' ? '单曲循环' : '顺序播放'
+    const PlayModeIcon = playMode === 'random' ? Shuffle : playMode === 'single' ? Repeat1 : Repeat
 
     const onLoadedMetadata = () => {
         const audio = audioRef.current
-        if (!audio) {
-            return
+        if (audio) {
+            setDuration(audio.duration || 0)
         }
-        setDuration(audio.duration || 0)
     }
 
     const onTimeUpdate = () => {
@@ -467,18 +547,9 @@ export default function App() {
             return
         }
         const audio = audioRef.current
-        if (!audio) {
-            return
+        if (audio) {
+            setCurrentTime(audio.currentTime || 0)
         }
-        setCurrentTime(audio.currentTime || 0)
-    }
-
-    const onSeekStart = () => {
-        setIsSeeking(true)
-    }
-
-    const onSeekChange = (value: number) => {
-        setCurrentTime(value)
     }
 
     const onSeekCommit = (value: number) => {
@@ -502,22 +573,164 @@ export default function App() {
         }
     }
 
-    const onToggleMute = () => {
-        setIsMuted(prev => !prev)
+    const onAddMusicDir = () => {
+        const nextDir = musicDirInput.trim()
+        if (!nextDir) {
+            return
+        }
+        setMusicDirs(prev => {
+            if (prev.includes(nextDir)) {
+                return prev
+            }
+            const next = [...prev, nextDir]
+            saveMusicDirs(next)
+            return next
+        })
+        setMusicDirInput('')
     }
 
-    const lyricBackgroundUrl = currentTrack?.coverUrl && !coverFailed ? `url("${withApiBase(currentTrack.coverUrl)}")` : undefined
+    const onRemoveMusicDir = (dir: string) => {
+        setMusicDirs(prev => {
+            const next = prev.filter(item => item !== dir)
+            saveMusicDirs(next)
+            return next
+        })
+    }
 
+    const onClearMusicDirs = () => {
+        saveMusicDirs([])
+        setMusicDirs([])
+        setMusicDirInput('')
+        setIsPathMenuOpen(false)
+    }
+
+    const onMinimize = async () => {
+        if (!desktopMode) {
+            return
+        }
+        try {
+            await getCurrentWindow().minimize()
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : '最小化失败')
+        }
+    }
+
+    const onToggleMaximize = async () => {
+        if (!desktopMode) {
+            return
+        }
+        try {
+            const win = getCurrentWindow()
+            await win.toggleMaximize()
+            setIsWindowMaximized(await win.isMaximized())
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : '最大化失败')
+        }
+    }
+
+    const onCloseWindow = async () => {
+        if (!desktopMode) {
+            return
+        }
+        try {
+            await getCurrentWindow().close()
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : '关闭窗口失败')
+        }
+    }
+
+    const lyricBackgroundUrl = currentTrack?.coverUrl && !coverFailed ? `url("${currentTrack.coverUrl}")` : undefined
     const contextTrack = contextMenu ? trackMap.get(contextMenu.trackId)?.track : undefined
 
     return (
         <main className="app-shell">
+            <header className="titlebar" data-tauri-drag-region={desktopMode ? true : undefined}>
+                <div className="titlebar-left" data-tauri-drag-region={desktopMode ? true : undefined}>
+                    Baize Desktop
+                </div>
+                <div className="titlebar-right" data-tauri-drag-region={false}>
+                    <button
+                        type="button"
+                        className="titlebar-btn"
+                        onClick={() => setIsPathMenuOpen(prev => !prev)}
+                        ref={pathPanelToggleRef}
+                        data-tauri-drag-region={false}
+                        title="音乐目录"
+                    >
+                        <FolderOpen size={14} />
+                        <span>音乐目录</span>
+                    </button>
+                    <button
+                        type="button"
+                        className="titlebar-btn icon-only"
+                        onClick={onMinimize}
+                        data-tauri-drag-region={false}
+                        title="最小化"
+                    >
+                        <Minus size={14} />
+                    </button>
+                    <button
+                        type="button"
+                        className="titlebar-btn icon-only"
+                        onClick={onToggleMaximize}
+                        data-tauri-drag-region={false}
+                        title={isWindowMaximized ? '还原' : '最大化'}
+                    >
+                        {isWindowMaximized ? <Copy size={13} /> : <Square size={13} />}
+                    </button>
+                    <button
+                        type="button"
+                        className="titlebar-btn close icon-only"
+                        onClick={onCloseWindow}
+                        data-tauri-drag-region={false}
+                        title="关闭"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            </header>
+
+            {isPathMenuOpen && (
+                <section className="path-panel" ref={pathPanelRef}>
+                    <p className="path-panel-title">下载音乐目录管理</p>
+                    <div className="path-panel-add">
+                        <input
+                            value={musicDirInput}
+                            onChange={event => setMusicDirInput(event.target.value)}
+                            placeholder="渚嬪: E:\\Music\\Downloads"
+                        />
+                        <button type="button" onClick={onAddMusicDir}>
+                            添加
+                        </button>
+                    </div>
+                    <ul className="path-list">
+                        {musicDirs.map(dir => (
+                            <li key={dir}>
+                                <span title={dir}>{dir}</span>
+                                <button type="button" onClick={() => onRemoveMusicDir(dir)}>
+                                    删除
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                    <div className="path-panel-actions">
+                        <button type="button" onClick={() => setIsPathMenuOpen(false)}>
+                            关闭
+                        </button>
+                        <button type="button" onClick={onClearMusicDirs}>
+                            清空
+                        </button>
+                    </div>
+                </section>
+            )}
+
             <section className="app-content">
                 <aside className="panel list-panel">
-                    <h2>Playlist</h2>
-                    {isLoading && <p className="muted">Loading tracks...</p>}
+                    <h2>歌曲列表</h2>
+                    {desktopMode && musicDirs.length === 0 && <p className="muted">当前仅显示服务器歌曲，可在标题栏添加本地目录</p>}
+                    {isLoading && <p className="muted">正在加载歌曲...</p>}
                     {error && <p className="error">{error}</p>}
-                    {!isLoading && !error && tracks.length === 0 && <p className="muted">No tracks found in ./music</p>}
+                    {!isLoading && !error && tracks.length === 0 && <p className="muted">未扫描到歌曲文件</p>}
                     <ul className="track-list">
                         {tracks.map((track, index) => (
                             <li key={track.id}>
@@ -536,11 +749,11 @@ export default function App() {
                 </aside>
 
                 <section className="panel lyric-panel">
-                    <h2>Lyrics</h2>
+                    <h2>歌词</h2>
                     <div className="lyric-stage" style={{ backgroundImage: lyricBackgroundUrl }}>
                         {currentTrack?.coverUrl && (
                             <img
-                                src={withApiBase(currentTrack.coverUrl)}
+                                src={currentTrack.coverUrl}
                                 alt=""
                                 className="cover-probe"
                                 onLoad={() => setCoverFailed(false)}
@@ -550,9 +763,9 @@ export default function App() {
                         <div className="lyric-backdrop" />
                         <div className="lyric-box" ref={lyricListRef}>
                             <div className="lyric-content">
-                                {lyricLoading && <p className="muted">Loading lyric...</p>}
+                                {lyricLoading && <p className="muted">正在加载歌词...</p>}
                                 {lyricError && <p className="error">{lyricError}</p>}
-                                {!lyricLoading && !lyricError && lyricLines.length === 0 && <p className="muted">No lyric available</p>}
+                                {!lyricLoading && !lyricError && lyricLines.length === 0 && <p className="muted">暂无歌词</p>}
                                 {!lyricLoading &&
                                     !lyricError &&
                                     lyricLines.map((line, index) => (
@@ -620,38 +833,38 @@ export default function App() {
                     <div className={isPlaying ? 'vinyl spinning' : 'vinyl'}>
                         <div className="vinyl-center">
                             {currentTrack?.coverUrl && !coverFailed ? (
-                                <img src={withApiBase(currentTrack.coverUrl)} alt={currentTrack.title} className="vinyl-cover" />
+                                <img src={currentTrack.coverUrl} alt={currentTrack.title} className="vinyl-cover" />
                             ) : (
                                 <div className="vinyl-cover-placeholder" />
                             )}
                         </div>
                     </div>
                     <div className="dock-track-meta">
-                        <p className="track-title-large">{currentTrack?.title ?? 'None'}</p>
+                        <p className="track-title-large">{currentTrack?.title ?? '未选择歌曲'}</p>
                         <p className="track-meta">{currentTrack?.artist ?? '-'}</p>
                     </div>
                 </div>
 
                 <div className="dock-main">
                     <div className="controls icon-controls controls-above-progress">
-                        <button type="button" onClick={onPrev} disabled={!canPrev} aria-label="Previous">
-                            {ICON_PREV}
+                        <button type="button" onClick={onPrev} disabled={!canPrev} aria-label="上一首">
+                            <SkipBack size={16} />
                         </button>
-                        <button type="button" onClick={onTogglePlay} disabled={!canPlay} aria-label="Play or pause">
-                            {isPlaying ? ICON_PAUSE : ICON_PLAY}
+                        <button type="button" onClick={onTogglePlay} disabled={!canPlay} aria-label="播放或暂停">
+                            {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                         </button>
-                        <button type="button" onClick={onNext} disabled={!canNext} aria-label="Next">
-                            {ICON_NEXT}
+                        <button type="button" onClick={onNext} disabled={!canNext} aria-label="下一首">
+                            <SkipForward size={16} />
                         </button>
                         <button
                             type="button"
-                            className="mode-btn"
+                            className="mode-btn icon-only"
                             onClick={onTogglePlayMode}
                             disabled={!canPlay}
-                            aria-label="Play mode"
-                            title={`播放模式：${playModeLabel}`}
+                            aria-label="播放模式"
+                            title={playModeLabel}
                         >
-                            {playModeLabel}
+                            <PlayModeIcon size={15} />
                         </button>
                     </div>
 
@@ -664,9 +877,9 @@ export default function App() {
                                 max={duration || 0}
                                 step={0.1}
                                 value={Math.min(currentTime, duration || 0)}
-                                onMouseDown={onSeekStart}
-                                onTouchStart={onSeekStart}
-                                onChange={event => onSeekChange(Number(event.target.value))}
+                                onMouseDown={() => setIsSeeking(true)}
+                                onTouchStart={() => setIsSeeking(true)}
+                                onChange={event => setCurrentTime(Number(event.target.value))}
                                 onMouseUp={event => onSeekCommit(Number((event.target as HTMLInputElement).value))}
                                 onTouchEnd={event => onSeekCommit(Number((event.target as HTMLInputElement).value))}
                                 onKeyUp={event => onSeekCommit(Number((event.target as HTMLInputElement).value))}
@@ -683,20 +896,20 @@ export default function App() {
                         className="download-btn"
                         onClick={() => currentTrack && downloadTrack(currentTrack)}
                         disabled={!currentTrack}
-                        aria-label="Download current track"
-                        title="Download"
+                        aria-label="下载当前歌曲"
+                        title="涓嬭浇"
                     >
-                        {ICON_DOWNLOAD}
+                        <Download size={16} />
                     </button>
                     <button
                         type="button"
                         className="playlist-btn"
                         onClick={() => setIsPlaylistOpen(prev => !prev)}
-                        aria-label="Open playlist"
-                        title="Playlist"
+                        aria-label="打开播放列表"
+                        title="播放列表"
                         ref={playlistToggleRef}
                     >
-                        {ICON_LIST}
+                        <ListMusic size={16} />
                     </button>
 
                     {isPlaylistOpen && (
@@ -716,8 +929,8 @@ export default function App() {
                     )}
 
                     <div className="volume-control">
-                        <button type="button" onClick={onToggleMute} disabled={!canPlay} aria-label="Mute">
-                            {isMuted ? ICON_MUTE : ICON_VOLUME}
+                        <button type="button" onClick={() => setIsMuted(prev => !prev)} disabled={!canPlay} aria-label="静音">
+                            {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
                         </button>
                         <div className="volume-popover">
                             <input
@@ -728,7 +941,7 @@ export default function App() {
                                 value={Math.round(volume * 100)}
                                 onChange={event => onVolumeChange(Number(event.target.value))}
                                 disabled={!canPlay}
-                                aria-label="Volume"
+                                aria-label="音量"
                             />
                             <span>{Math.round(volume * 100)}%</span>
                         </div>

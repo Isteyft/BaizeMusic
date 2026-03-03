@@ -1,12 +1,30 @@
 {
   "name": "@baize/destop",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite --port 1420 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
-  "keywords": [],
-  "author": "Isteyft",
-  "license": "ISC"
+  "dependencies": {
+    "@baize/types": "workspace:*",
+    "@baize/utils": "workspace:*",
+    "@tauri-apps/api": "^2.0.0",
+    "lucide-react": "^0.542.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^18.3.19",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
 }

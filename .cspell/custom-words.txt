@@ -4,3 +4,6 @@ commitlint
 isteyft
 ming
 Prefixs
+flac
+unlisten
+tauri
