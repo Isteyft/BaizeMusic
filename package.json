@@ -1,0 +1,62 @@
+{
+  "name": "baize",
+  "version": "1.0.0",
+  "private": true,
+  "author": "Isteyft",
+  "license": "ISC",
+  "packageManager": "pnpm@10.19.0",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint",
+    "lint:staged": "lint-staged",
+    "spellcheck": "cspell lint --dot --gitignore --color --cache --show-suggestions \"(packages|apps)/**/*.@(html|js|cjs|mjs|ts|tsx|css|scss|md)\"",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "commit": "git-cz",
+    "prepare": "husky"
+  },
+  "config": {
+    "commitizen": {
+      "path": "node_modules/cz-git"
+    }
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{css,scss,md}": [
+      "prettier --write"
+    ]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "22.9.0",
+    "eslint": "9.14.0",
+    "@eslint/js": "9.14.0",
+    "globals": "15.12.0",
+    "typescript": "5.6.3",
+    "typescript-eslint": "8.13.0",
+    "eslint-plugin-react-refresh": "0.4.14",
+    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
+    "eslint-plugin-prettier": "5.2.1",
+    "eslint-plugin-simple-import-sort": "12.1.1",
+    "cspell": "8.15.7",
+    "lint-staged": "15.2.10",
+    "prettier": "3.3.3",
+    "@commitlint/cli": "19.5.0",
+    "@commitlint/config-conventional": "19.5.0",
+    "commitizen": "4.3.1",
+    "fast-glob": "3.3.2",
+    "husky": "9.1.6",
+    "cz-git": "1.10.1",
+    "tsup": "8.3.5",
+    "turbo": "2.2.3",
+    "rimraf": "6.0.1",
+    "npm-run-all2": "7.0.1",
+    "postcss": "8.4.27",
+    "@tailwindcss/postcss": "^4.1.18",
+    "tailwindcss": "^4.0.0",
+    "autoprefixer": "^10.4.0"
+  }
+}

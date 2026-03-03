@@ -1,0 +1,14 @@
+{
+    "$schema": "https://turbo.build/schema.json",
+    "tasks": {
+        "typecheck": {
+            "cache": false,
+            "persistent": true
+        },
+        "test": {
+            "cache": false
+        }
+    },
+    "ui": "tui",
+    "cacheDir": ".turbo/cache"
+}
