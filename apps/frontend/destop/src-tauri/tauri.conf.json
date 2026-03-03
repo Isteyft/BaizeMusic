@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Baize Desktop",
+        "title": "白泽音乐",
         "width": 1280,
         "height": 800,
         "resizable": true,
@@ -21,7 +21,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {

@@ -177,3 +177,113 @@ Migrate the existing `apps/frontend/website` music player UI/logic into `apps/fr
 
 -   TypeScript check passed:
     -   `pnpm --filter @baize/destop typecheck`
+
+---
+
+## 2026-03-03 Tray and Directory Picker Update
+
+### 1. Desktop Tray Added
+
+-   Added system tray for desktop app.
+-   Tray right-click menu now includes:
+    -   `显示主窗口`
+    -   `打开音乐目录管理`
+    -   `上一首`
+    -   `播放/暂停`
+    -   `下一首`
+    -   `退出`
+-   Left-click tray icon restores and focuses the main window.
+-   File:
+    -   `apps/frontend/destop/src-tauri/src/main.rs`
+
+### 2. Close Confirmation Behavior
+
+-   Intercepts close request on main window and shows confirmation dialog:
+    -   Yes -> exit app directly
+    -   No -> hide window to tray
+-   File:
+    -   `apps/frontend/destop/src-tauri/src/main.rs`
+
+### 3. Tray Controls Integrated With Player
+
+-   Tray menu actions emit `tray-control` events to frontend:
+    -   `prev`
+    -   `toggle-play`
+    -   `next`
+    -   `open-music-dir`
+-   Frontend listens and maps to existing player controls.
+-   Files:
+    -   `apps/frontend/destop/src-tauri/src/main.rs`
+    -   `apps/frontend/destop/src/App.tsx`
+
+### 4. System Music Directory Picker
+
+-   Added Tauri command:
+    -   `pick_music_dir`
+-   Uses system folder picker dialog and returns selected path.
+-   Added `选择文件夹` button in music directory management panel.
+-   Selected path is auto-filled into directory input box.
+-   Files:
+    -   `apps/frontend/destop/src-tauri/src/main.rs`
+    -   `apps/frontend/destop/src/App.tsx`
+    -   `apps/frontend/destop/src/styles.css`
+
+### 5. Rust Dependencies / Features
+
+-   Added:
+    -   `rfd = "0.15"`
+-   Enabled Tauri tray feature:
+    -   `tauri = { version = "2", features = ["tray-icon"] }`
+-   File:
+    -   `apps/frontend/destop/src-tauri/Cargo.toml`
+
+### 6. Validation
+
+-   Rust check passed:
+    -   `cargo check` in `apps/frontend/destop/src-tauri`
+-   TypeScript check passed:
+    -   `pnpm --filter @baize/destop typecheck`
+
+---
+
+## 2026-03-03 Website/Desktop Icon Sync Update
+
+### 1. Website Icon Library Added
+
+-   Added `lucide-react` to website dependencies to align icon system with desktop app.
+-   File:
+    -   `apps/frontend/website/package.json`
+
+### 2. Website Player Buttons Synced With Desktop
+
+-   Replaced website Unicode/text icons with the same SVG icon set used in desktop:
+    -   previous / play-pause / next
+    -   play mode button
+    -   download button
+    -   playlist button
+    -   volume / mute button
+-   File:
+    -   `apps/frontend/website/src/App.tsx`
+
+### 3. Website Styles Synced
+
+-   Updated website button styles to match desktop icon-button behavior:
+    -   centered icon layout
+    -   circular mode button style
+    -   consistent volume/download/playlist button alignment
+-   File:
+    -   `apps/frontend/website/src/styles.css`
+
+### 4. Text Cleanup
+
+-   Fixed garbled text in website UI labels introduced by previous encoding issues:
+    -   play mode labels
+    -   context menu text
+    -   playlist title / empty text
+-   File:
+    -   `apps/frontend/website/src/App.tsx`
+
+### 5. Validation
+
+-   Website TypeScript check passed:
+    -   `pnpm --filter @baize/website typecheck`

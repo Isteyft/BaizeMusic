@@ -1,19 +1,12 @@
-import type { Track, TrackListResponse } from '@baize/types'
+﻿import type { Track, TrackListResponse } from '@baize/types'
 import type { LyricLine } from '@baize/utils'
 import { formatTime, parseLrc } from '@baize/utils'
+import { Download, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 const VOLUME_STORAGE_KEY = 'baize_player_volume'
-const ICON_PREV = '\u23EE'
-const ICON_PLAY = '\u25B6'
-const ICON_PAUSE = '\u23F8'
-const ICON_NEXT = '\u23ED'
-const ICON_DOWNLOAD = '\u2B07'
-const ICON_LIST = '\u2630'
-const ICON_MUTE = '\u{1F507}'
-const ICON_VOLUME = '\u{1F50A}'
 
 interface TrackContextMenu {
     x: number
@@ -446,13 +439,14 @@ export default function App() {
 
     const playModeLabel = useMemo(() => {
         if (playMode === 'random') {
-            return '随机'
+            return '随机播放'
         }
         if (playMode === 'single') {
-            return '单曲'
+            return '单曲循环'
         }
-        return '顺序'
+        return '顺序播放'
     }, [playMode])
+    const PlayModeIcon = playMode === 'random' ? Shuffle : playMode === 'single' ? Repeat1 : Repeat
 
     const onLoadedMetadata = () => {
         const audio = audioRef.current
@@ -635,23 +629,23 @@ export default function App() {
                 <div className="dock-main">
                     <div className="controls icon-controls controls-above-progress">
                         <button type="button" onClick={onPrev} disabled={!canPrev} aria-label="Previous">
-                            {ICON_PREV}
+                            <SkipBack size={16} />
                         </button>
                         <button type="button" onClick={onTogglePlay} disabled={!canPlay} aria-label="Play or pause">
-                            {isPlaying ? ICON_PAUSE : ICON_PLAY}
+                            {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                         </button>
                         <button type="button" onClick={onNext} disabled={!canNext} aria-label="Next">
-                            {ICON_NEXT}
+                            <SkipForward size={16} />
                         </button>
                         <button
                             type="button"
-                            className="mode-btn"
+                            className="mode-btn icon-only"
                             onClick={onTogglePlayMode}
                             disabled={!canPlay}
                             aria-label="Play mode"
-                            title={`播放模式：${playModeLabel}`}
+                            title={playModeLabel}
                         >
-                            {playModeLabel}
+                            <PlayModeIcon size={15} />
                         </button>
                     </div>
 
@@ -686,7 +680,7 @@ export default function App() {
                         aria-label="Download current track"
                         title="Download"
                     >
-                        {ICON_DOWNLOAD}
+                        <Download size={16} />
                     </button>
                     <button
                         type="button"
@@ -696,7 +690,7 @@ export default function App() {
                         title="Playlist"
                         ref={playlistToggleRef}
                     >
-                        {ICON_LIST}
+                        <ListMusic size={16} />
                     </button>
 
                     {isPlaylistOpen && (
@@ -717,7 +711,7 @@ export default function App() {
 
                     <div className="volume-control">
                         <button type="button" onClick={onToggleMute} disabled={!canPlay} aria-label="Mute">
-                            {isMuted ? ICON_MUTE : ICON_VOLUME}
+                            {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
                         </button>
                         <div className="volume-popover">
                             <input

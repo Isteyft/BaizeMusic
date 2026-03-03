@@ -109,7 +109,7 @@ body {
 
 .path-panel-add {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
     gap: 8px;
 }
 
@@ -204,6 +204,152 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: #93c5fd;
+}
+
+.panel-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.panel-title-row h2 {
+    margin: 0;
+}
+
+.panel-title-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.panel-refresh-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    background: rgba(30, 41, 59, 0.85);
+    color: #dbeafe;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.panel-refresh-btn:hover {
+    background: rgba(14, 116, 144, 0.45);
+}
+
+.panel-refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.panel-download-list-btn {
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    background: rgba(30, 41, 59, 0.85);
+    color: #dbeafe;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 10px;
+    cursor: pointer;
+}
+
+.panel-download-list-btn:hover {
+    background: rgba(14, 116, 144, 0.45);
+}
+
+.download-panel {
+    position: fixed;
+    top: calc(var(--titlebar-height) + 6px);
+    left: 16px;
+    z-index: 56;
+    width: min(420px, calc(100vw - 32px));
+    max-height: 360px;
+    border: 1px solid rgba(148, 163, 184, 0.36);
+    border-radius: 12px;
+    background: rgba(2, 6, 23, 0.96);
+    backdrop-filter: blur(10px);
+    padding: 10px;
+    overflow: auto;
+}
+
+.download-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.download-panel-title {
+    margin: 0;
+    color: #93c5fd;
+    font-size: 12px;
+}
+
+.download-panel-header button {
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    background: rgba(30, 41, 59, 0.9);
+    color: #e2e8f0;
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.download-task-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.download-task-item {
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(15, 23, 42, 0.62);
+}
+
+.download-task-title {
+    margin: 0;
+    color: #e2e8f0;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.download-task-meta {
+    margin: 4px 0 6px;
+    color: #cbd5e1;
+    font-size: 12px;
+}
+
+.download-task-path {
+    margin: 6px 0 0;
+    color: #94a3b8;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.download-progress-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(51, 65, 85, 0.9);
+    overflow: hidden;
+}
+
+.download-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+    transition: width 0.2s ease;
 }
 
 .list-panel {

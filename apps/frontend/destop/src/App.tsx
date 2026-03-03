@@ -2,6 +2,7 @@
 import type { LyricLine } from '@baize/utils'
 import { formatTime, parseLrc } from '@baize/utils'
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
     Copy,
@@ -11,6 +12,7 @@ import {
     Minus,
     Pause,
     Play,
+    RefreshCw,
     Repeat,
     Repeat1,
     Shuffle,
@@ -46,6 +48,27 @@ interface DesktopScannedTrack {
     filePath: string
     coverPath?: string
     lyricPath?: string
+}
+
+type DownloadTaskStatus = 'pending' | 'downloading' | 'completed' | 'failed'
+
+interface DownloadTask {
+    taskId: string
+    trackId: string
+    title: string
+    progress: number
+    status: DownloadTaskStatus
+    targetDir: string
+    filePath?: string
+    error?: string
+}
+
+interface DownloadProgressPayload {
+    taskId: string
+    progress: number
+    status: DownloadTaskStatus
+    filePath?: string
+    error?: string
 }
 
 function readStoredVolume(): number {
@@ -97,6 +120,7 @@ export default function App() {
     const playlistToggleRef = useRef<HTMLButtonElement>(null)
     const pathPanelRef = useRef<HTMLDivElement>(null)
     const pathPanelToggleRef = useRef<HTMLButtonElement>(null)
+    const loadedTrackKeyRef = useRef<string | null>(null)
 
     const [duration, setDuration] = useState(0)
     const [currentTime, setCurrentTime] = useState(0)
@@ -120,6 +144,9 @@ export default function App() {
     const [musicDirs, setMusicDirs] = useState<string[]>(() => readStoredMusicDirs())
     const [musicDirInput, setMusicDirInput] = useState('')
     const [isWindowMaximized, setIsWindowMaximized] = useState(false)
+    const [refreshNonce, setRefreshNonce] = useState(0)
+    const [isDownloadPanelOpen, setIsDownloadPanelOpen] = useState(false)
+    const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([])
 
     const currentTrack = tracks[currentIndex]
     const trackMap = useMemo(() => new Map(tracks.map((track, index) => [track.id, { track, index }])), [tracks])
@@ -134,6 +161,10 @@ export default function App() {
     const playlistTracks = useMemo(
         () => playlistTrackIds.map(trackId => trackMap.get(trackId)?.track).filter((track): track is Track => !!track),
         [playlistTrackIds, trackMap]
+    )
+    const activeDownloadCount = useMemo(
+        () => downloadTasks.filter(task => task.status === 'pending' || task.status === 'downloading').length,
+        [downloadTasks]
     )
 
     useEffect(() => {
@@ -189,14 +220,24 @@ export default function App() {
 
                 const mergedTracks = [...serverTracks, ...localTracks]
                 if (!cancelled) {
+                    const currentTrackId = currentTrack?.id
+                    const preservedIndex = currentTrackId ? mergedTracks.findIndex(track => track.id === currentTrackId) : -1
                     setTracks(mergedTracks)
-                    setCurrentIndex(0)
+                    setCurrentIndex(preservedIndex >= 0 ? preservedIndex : 0)
                     if (mergedTracks.length === 0) {
-                        setError(serverError ?? localError)
+                        if (desktopMode) {
+                            if (localError) {
+                                setError(`本地目录扫描失败，请检查目录配置：${localError}`)
+                            } else {
+                                setError('未获取到歌曲，请添加音乐目录')
+                            }
+                        } else {
+                            setError(serverError ?? localError)
+                        }
                     } else if (serverError && localTracks.length > 0) {
-                        setError(`服务器歌曲加载失败，当前显示本地目录歌曲：${serverError}`)
+                        setError('服务器不可用，当前显示本地目录歌曲')
                     } else if (localError && serverTracks.length > 0) {
-                        setError(`本地目录扫描失败，当前显示服务器歌曲：${localError}`)
+                        setError('本地目录扫描失败，当前显示服务器歌曲')
                     } else {
                         setError(null)
                     }
@@ -217,7 +258,7 @@ export default function App() {
         return () => {
             cancelled = true
         }
-    }, [desktopMode, musicDirs])
+    }, [desktopMode, musicDirs, refreshNonce])
 
     useEffect(() => {
         setCoverFailed(false)
@@ -269,6 +310,11 @@ export default function App() {
         if (!audio || !currentTrack) {
             return
         }
+        const nextTrackKey = `${currentTrack.id}::${currentTrack.streamUrl}`
+        if (loadedTrackKeyRef.current === nextTrackKey) {
+            return
+        }
+        loadedTrackKeyRef.current = nextTrackKey
         audio.src = currentTrack.streamUrl
         setCurrentTime(0)
         setDuration(0)
@@ -399,6 +445,7 @@ export default function App() {
     const canPlay = tracks.length > 0
     const canPrev = canPlay && effectiveQueueIds.length > 0
     const canNext = canPlay && effectiveQueueIds.length > 0
+    const hasDownloadTargetDir = musicDirs.length > 0
 
     const activeLyricIndex = useMemo(() => {
         if (lyricLines.length === 0) {
@@ -431,8 +478,50 @@ export default function App() {
         setIsPlaying(true)
     }
 
-    const downloadTrack = (track: Track) => {
-        window.open(track.streamUrl, '_blank', 'noopener,noreferrer')
+    const isLocalTrack = (track?: Track): boolean => !!track && track.id.startsWith('local-')
+
+    const downloadTrack = async (track: Track) => {
+        if (isLocalTrack(track)) {
+            return
+        }
+
+        const targetDir = musicDirs[0]?.trim()
+        if (!targetDir) {
+            setError('请先在“音乐目录”中添加至少一个本地目录')
+            return
+        }
+
+        const downloadUrl = new URL(`/api/tracks/${encodeURIComponent(track.id)}/download`, window.location.origin).toString()
+        const coverUrl = new URL(`/api/tracks/${encodeURIComponent(track.id)}/cover`, window.location.origin).toString()
+        const taskId = `${track.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+        setDownloadTasks(prev => [
+            {
+                taskId,
+                trackId: track.id,
+                title: track.title,
+                progress: 0,
+                status: 'pending',
+                targetDir,
+            },
+            ...prev,
+        ])
+        setIsDownloadPanelOpen(true)
+
+        try {
+            setError(null)
+            await invoke<string>('download_track_to_dir', {
+                taskId,
+                downloadUrl,
+                targetDir,
+                preferredFileName: `${track.artist} - ${track.title}`,
+                coverUrl,
+            })
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : '下载失败'
+            setError(message)
+            setDownloadTasks(prev => prev.map(task => (task.taskId === taskId ? { ...task, status: 'failed', error: message } : task)))
+        }
     }
 
     const addTrackToPlaylist = (track: Track) => {
@@ -519,6 +608,74 @@ export default function App() {
         }
     }
 
+    useEffect(() => {
+        if (!desktopMode) {
+            return
+        }
+
+        let unlisten: (() => void) | undefined
+        void listen<string>('tray-control', event => {
+            const action = event.payload
+            if (action === 'prev') {
+                onPrev()
+                return
+            }
+            if (action === 'next') {
+                onNext()
+                return
+            }
+            if (action === 'toggle-play') {
+                onTogglePlay()
+                return
+            }
+            if (action === 'open-music-dir') {
+                setIsPathMenuOpen(true)
+            }
+        }).then(fn => {
+            unlisten = fn
+        })
+
+        return () => {
+            if (unlisten) {
+                unlisten()
+            }
+        }
+    }, [desktopMode, canPrev, canNext, canPlay, queueCursor, currentIndex, playMode, effectiveQueueIds, trackMap])
+
+    useEffect(() => {
+        if (!desktopMode) {
+            return
+        }
+
+        let unlisten: (() => void) | undefined
+        void listen<DownloadProgressPayload>('download-progress', event => {
+            const payload = event.payload
+            setDownloadTasks(prev => {
+                const index = prev.findIndex(task => task.taskId === payload.taskId)
+                if (index < 0) {
+                    return prev
+                }
+                const next = [...prev]
+                next[index] = {
+                    ...next[index],
+                    progress: Math.max(0, Math.min(100, payload.progress)),
+                    status: payload.status,
+                    filePath: payload.filePath ?? next[index].filePath,
+                    error: payload.error ?? next[index].error,
+                }
+                return next
+            })
+        }).then(fn => {
+            unlisten = fn
+        })
+
+        return () => {
+            if (unlisten) {
+                unlisten()
+            }
+        }
+    }, [desktopMode])
+
     const onEnded = () => {
         const nextIndex = resolveNextTrackIndex()
         if (nextIndex === null) {
@@ -550,6 +707,15 @@ export default function App() {
         if (audio) {
             setCurrentTime(audio.currentTime || 0)
         }
+    }
+
+    const onAudioError = () => {
+        if (!currentTrack) {
+            return
+        }
+        const target = isLocalTrack(currentTrack) ? '本地文件' : '网络文件'
+        setError(`无法播放${target}：${currentTrack.title}`)
+        setIsPlaying(false)
     }
 
     const onSeekCommit = (value: number) => {
@@ -587,6 +753,20 @@ export default function App() {
             return next
         })
         setMusicDirInput('')
+    }
+
+    const onPickMusicDir = async () => {
+        if (!desktopMode) {
+            return
+        }
+        try {
+            const selected = await invoke<string | null>('pick_music_dir')
+            if (selected) {
+                setMusicDirInput(selected)
+            }
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : '打开目录选择器失败')
+        }
     }
 
     const onRemoveMusicDir = (dir: string) => {
@@ -639,6 +819,10 @@ export default function App() {
         }
     }
 
+    const onRefreshTracks = () => {
+        setRefreshNonce(prev => prev + 1)
+    }
+
     const lyricBackgroundUrl = currentTrack?.coverUrl && !coverFailed ? `url("${currentTrack.coverUrl}")` : undefined
     const contextTrack = contextMenu ? trackMap.get(contextMenu.trackId)?.track : undefined
 
@@ -646,7 +830,7 @@ export default function App() {
         <main className="app-shell">
             <header className="titlebar" data-tauri-drag-region={desktopMode ? true : undefined}>
                 <div className="titlebar-left" data-tauri-drag-region={desktopMode ? true : undefined}>
-                    Baize Desktop
+                    白泽音乐
                 </div>
                 <div className="titlebar-right" data-tauri-drag-region={false}>
                     <button
@@ -697,8 +881,11 @@ export default function App() {
                         <input
                             value={musicDirInput}
                             onChange={event => setMusicDirInput(event.target.value)}
-                            placeholder="渚嬪: E:\\Music\\Downloads"
+                            placeholder="例如: E:\\Music\\Downloads"
                         />
+                        <button type="button" onClick={onPickMusicDir}>
+                            选择文件夹
+                        </button>
                         <button type="button" onClick={onAddMusicDir}>
                             添加
                         </button>
@@ -724,9 +911,73 @@ export default function App() {
                 </section>
             )}
 
+            {isDownloadPanelOpen && (
+                <section className="download-panel">
+                    <div className="download-panel-header">
+                        <p className="download-panel-title">下载列表</p>
+                        <button type="button" onClick={() => setIsDownloadPanelOpen(false)}>
+                            关闭
+                        </button>
+                    </div>
+                    {downloadTasks.length === 0 && <p className="muted">暂无下载任务</p>}
+                    {downloadTasks.length > 0 && (
+                        <ul className="download-task-list">
+                            {downloadTasks.map(task => (
+                                <li key={task.taskId} className="download-task-item">
+                                    <p className="download-task-title" title={task.title}>
+                                        {task.title}
+                                    </p>
+                                    <p className="download-task-meta">
+                                        {task.status === 'completed'
+                                            ? '已完成'
+                                            : task.status === 'failed'
+                                              ? `失败${task.error ? `: ${task.error}` : ''}`
+                                              : task.status === 'downloading'
+                                                ? '下载中'
+                                                : '等待中'}
+                                        {task.status !== 'failed' && ` · ${Math.round(task.progress)}%`}
+                                    </p>
+                                    <div className="download-progress-track">
+                                        <div className="download-progress-fill" style={{ width: `${task.progress}%` }} />
+                                    </div>
+                                    {task.filePath && (
+                                        <p className="download-task-path" title={task.filePath}>
+                                            {task.filePath}
+                                        </p>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </section>
+            )}
+
             <section className="app-content">
                 <aside className="panel list-panel">
-                    <h2>歌曲列表</h2>
+                    <div className="panel-title-row">
+                        <h2>歌曲列表</h2>
+                        <div className="panel-title-actions">
+                            <button
+                                type="button"
+                                className="panel-refresh-btn"
+                                onClick={onRefreshTracks}
+                                disabled={isLoading}
+                                aria-label="刷新歌曲列表"
+                                title="刷新"
+                            >
+                                <RefreshCw size={14} />
+                            </button>
+                            <button
+                                type="button"
+                                className="panel-download-list-btn"
+                                onClick={() => setIsDownloadPanelOpen(true)}
+                                aria-label="打开下载列表"
+                                title="下载列表"
+                            >
+                                下载列表{activeDownloadCount > 0 ? ` (${activeDownloadCount})` : ''}
+                            </button>
+                        </div>
+                    </div>
                     {desktopMode && musicDirs.length === 0 && <p className="muted">当前仅显示服务器歌曲，可在标题栏添加本地目录</p>}
                     {isLoading && <p className="muted">正在加载歌曲...</p>}
                     {error && <p className="error">{error}</p>}
@@ -815,15 +1066,17 @@ export default function App() {
                         >
                             添加到播放列表
                         </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                downloadTrack(contextTrack)
-                                setContextMenu(null)
-                            }}
-                        >
-                            下载歌曲
-                        </button>
+                        {!isLocalTrack(contextTrack) && hasDownloadTargetDir && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void downloadTrack(contextTrack)
+                                    setContextMenu(null)
+                                }}
+                            >
+                                下载歌曲
+                            </button>
+                        )}
                     </div>,
                     document.body
                 )}
@@ -891,16 +1144,18 @@ export default function App() {
                 </div>
 
                 <div className="volume-wrap">
-                    <button
-                        type="button"
-                        className="download-btn"
-                        onClick={() => currentTrack && downloadTrack(currentTrack)}
-                        disabled={!currentTrack}
-                        aria-label="下载当前歌曲"
-                        title="涓嬭浇"
-                    >
-                        <Download size={16} />
-                    </button>
+                    {!isLocalTrack(currentTrack) && hasDownloadTargetDir && (
+                        <button
+                            type="button"
+                            className="download-btn"
+                            onClick={() => currentTrack && void downloadTrack(currentTrack)}
+                            disabled={!currentTrack}
+                            aria-label="下载当前歌曲"
+                            title="下载"
+                        >
+                            <Download size={16} />
+                        </button>
+                    )}
                     <button
                         type="button"
                         className="playlist-btn"
@@ -949,7 +1204,14 @@ export default function App() {
                 </div>
             </footer>
 
-            <audio ref={audioRef} onEnded={onEnded} onLoadedMetadata={onLoadedMetadata} onTimeUpdate={onTimeUpdate} preload="metadata" />
+            <audio
+                ref={audioRef}
+                onEnded={onEnded}
+                onLoadedMetadata={onLoadedMetadata}
+                onTimeUpdate={onTimeUpdate}
+                onError={onAudioError}
+                preload="metadata"
+            />
         </main>
     )
 }

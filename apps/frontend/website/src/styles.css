@@ -250,6 +250,9 @@ body {
 .icon-controls button {
     width: 34px;
     height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 999px;
     border: 1px solid rgba(125, 211, 252, 0.6);
     background: rgba(14, 116, 144, 0.25);
@@ -259,12 +262,10 @@ body {
 }
 
 .icon-controls .mode-btn {
-    width: auto;
-    min-width: 54px;
-    padding: 0 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 700;
+    width: 34px;
+    min-width: 34px;
+    padding: 0;
+    border-radius: 999px;
 }
 
 .icon-controls button:disabled,
@@ -316,6 +317,9 @@ body {
 .volume-wrap button {
     width: 32px;
     height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: 1px solid rgba(148, 163, 184, 0.5);
     border-radius: 999px;
     background: rgba(30, 41, 59, 0.8);
@@ -323,16 +327,6 @@ body {
     cursor: pointer;
     position: relative;
     z-index: 2;
-}
-
-.download-btn {
-    font-size: 16px;
-    font-weight: 700;
-}
-
-.playlist-btn {
-    font-size: 14px;
-    font-weight: 700;
 }
 
 .playlist-popover {

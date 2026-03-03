@@ -7,6 +7,10 @@
   "packageManager": "pnpm@10.19.0",
   "type": "module",
   "scripts": {
+    "dev": "turbo run dev --parallel --filter=@baize/server --filter=@baize/website",
+    "dev:all": "turbo run dev --parallel --filter=@baize/server --filter=@baize/website --filter=@baize/destop",
+    "dev:desktop": "turbo run dev --parallel --filter=@baize/server --filter=@baize/destop",
+    "dev:tauri": "turbo run dev tauri:dev --parallel --filter=@baize/server --filter=@baize/destop",
     "lint": "eslint",
     "lint:staged": "lint-staged",
     "spellcheck": "cspell lint --dot --gitignore --color --cache --show-suggestions \"(packages|apps)/**/*.@(html|js|cjs|mjs|ts|tsx|css|scss|md)\"",
