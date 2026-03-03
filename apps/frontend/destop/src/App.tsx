@@ -15,10 +15,12 @@ import {
     RefreshCw,
     Repeat,
     Repeat1,
+    Search,
     Shuffle,
     SkipBack,
     SkipForward,
     Square,
+    Trash2,
     Volume2,
     VolumeX,
     X,
@@ -147,6 +149,8 @@ export default function App() {
     const [refreshNonce, setRefreshNonce] = useState(0)
     const [isDownloadPanelOpen, setIsDownloadPanelOpen] = useState(false)
     const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([])
+    const [isSearchOpen, setIsSearchOpen] = useState(false)
+    const [searchKeyword, setSearchKeyword] = useState('')
 
     const currentTrack = tracks[currentIndex]
     const trackMap = useMemo(() => new Map(tracks.map((track, index) => [track.id, { track, index }])), [tracks])
@@ -162,6 +166,13 @@ export default function App() {
         () => playlistTrackIds.map(trackId => trackMap.get(trackId)?.track).filter((track): track is Track => !!track),
         [playlistTrackIds, trackMap]
     )
+    const normalizedKeyword = useMemo(() => searchKeyword.trim().toLowerCase(), [searchKeyword])
+    const filteredTracks = useMemo(() => {
+        if (!normalizedKeyword) {
+            return tracks
+        }
+        return tracks.filter(track => `${track.title} ${track.artist} ${track.album}`.toLowerCase().includes(normalizedKeyword))
+    }, [tracks, normalizedKeyword])
     const activeDownloadCount = useMemo(
         () => downloadTasks.filter(task => task.status === 'pending' || task.status === 'downloading').length,
         [downloadTasks]
@@ -535,6 +546,10 @@ export default function App() {
         }
         playTrackByIndex(item.index)
         setIsPlaylistOpen(false)
+    }
+
+    const removeTrackFromPlaylist = (trackId: string) => {
+        setPlaylistTrackIds(prev => prev.filter(id => id !== trackId))
     }
 
     const resolveNextTrackIndex = (): number | null => {
@@ -959,6 +974,15 @@ export default function App() {
                         <div className="panel-title-actions">
                             <button
                                 type="button"
+                                className="panel-search-btn"
+                                onClick={() => setIsSearchOpen(prev => !prev)}
+                                aria-label="搜索歌曲"
+                                title="搜索歌曲"
+                            >
+                                <Search size={14} />
+                            </button>
+                            <button
+                                type="button"
                                 className="panel-refresh-btn"
                                 onClick={onRefreshTracks}
                                 disabled={isLoading}
@@ -978,24 +1002,37 @@ export default function App() {
                             </button>
                         </div>
                     </div>
+                    {isSearchOpen && (
+                        <div className="track-search-wrap">
+                            <input
+                                type="text"
+                                value={searchKeyword}
+                                onChange={event => setSearchKeyword(event.target.value)}
+                                placeholder="按歌名或歌手搜索"
+                            />
+                        </div>
+                    )}
                     {desktopMode && musicDirs.length === 0 && <p className="muted">当前仅显示服务器歌曲，可在标题栏添加本地目录</p>}
                     {isLoading && <p className="muted">正在加载歌曲...</p>}
                     {error && <p className="error">{error}</p>}
                     {!isLoading && !error && tracks.length === 0 && <p className="muted">未扫描到歌曲文件</p>}
                     <ul className="track-list">
-                        {tracks.map((track, index) => (
-                            <li key={track.id}>
-                                <button
-                                    type="button"
-                                    onClick={() => playTrackByIndex(index)}
-                                    onContextMenu={event => onTrackContextMenu(event, track, index)}
-                                    className={index === currentIndex ? 'track-item active' : 'track-item'}
-                                >
-                                    <span className="track-title">{track.title}</span>
-                                    <span className="track-meta">{track.artist}</span>
-                                </button>
-                            </li>
-                        ))}
+                        {filteredTracks.map((track, index) => {
+                            const sourceIndex = trackMap.get(track.id)?.index ?? index
+                            return (
+                                <li key={track.id}>
+                                    <button
+                                        type="button"
+                                        onClick={() => playTrackByIndex(sourceIndex)}
+                                        onContextMenu={event => onTrackContextMenu(event, track, sourceIndex)}
+                                        className={sourceIndex === currentIndex ? 'track-item active' : 'track-item'}
+                                    >
+                                        <span className="track-title">{track.title}</span>
+                                        <span className="track-meta">{track.artist}</span>
+                                    </button>
+                                </li>
+                            )
+                        })}
                     </ul>
                 </aside>
 
@@ -1174,8 +1211,21 @@ export default function App() {
                             <ul className="playlist-popover-list">
                                 {playlistTracks.map(track => (
                                     <li key={track.id}>
-                                        <button type="button" onClick={() => playTrackFromPlaylist(track.id)}>
+                                        <button
+                                            type="button"
+                                            className="playlist-track-play"
+                                            onClick={() => playTrackFromPlaylist(track.id)}
+                                        >
                                             {track.title}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="playlist-track-remove"
+                                            onClick={() => removeTrackFromPlaylist(track.id)}
+                                            aria-label={`从播放列表删除 ${track.title}`}
+                                            title="删除"
+                                        >
+                                            <Trash2 size={14} />
                                         </button>
                                     </li>
                                 ))}

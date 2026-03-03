@@ -86,3 +86,25 @@ This document summarizes the recent desktop-side updates in `apps/frontend/desto
 
 -   `pnpm --filter @baize/destop typecheck`
 -   `cargo check --manifest-path apps/frontend/destop/src-tauri/Cargo.toml`
+
+## 2026-03-03 Incremental Update (Playlist UX Sync)
+
+### New Features
+
+-   Synced track-search button in desktop track list header.
+-   Added searchable filter input (title/artist/album keyword matching).
+-   Added delete button for each row in playlist popover.
+-   Playlist tracks can be removed directly from current queue popover.
+
+### Fixes
+
+-   Fixed playlist popover style issue caused by generic `.volume-wrap button` rule.
+-   Added scoped selectors:
+    -   `.playlist-popover .playlist-track-play`
+    -   `.playlist-popover .playlist-track-remove`
+-   Explicitly set playlist play button `height: auto` to avoid dock button height inheritance.
+
+### Files Updated
+
+-   `apps/frontend/destop/src/App.tsx`
+-   `apps/frontend/destop/src/styles.css`

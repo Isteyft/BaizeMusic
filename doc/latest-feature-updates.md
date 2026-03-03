@@ -72,3 +72,22 @@ This document summarizes the latest implementation updates in the music player.
 -   Frontend typecheck passed:
     -   `pnpm --filter @baize/website typecheck`
 -   Backend typecheck passed in earlier steps for related endpoint changes.
+
+## 2026-03-03 Incremental Update (Playlist UX)
+
+### New Features
+
+-   Added a small search button in the track list header.
+-   Search panel can be toggled to filter tracks by title/artist/album keywords.
+-   Added delete button for each item in the custom playlist popover.
+-   Playlist item can now be removed directly from the popover without opening context menu.
+
+### Fixes
+
+-   Fixed playlist popover button style conflict with `.volume-wrap button`.
+-   Scoped playlist button styles under `.playlist-popover` to avoid global dock button styles overriding height/size.
+
+### Files Updated
+
+-   `apps/frontend/website/src/App.tsx`
+-   `apps/frontend/website/src/styles.css`

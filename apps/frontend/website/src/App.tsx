@@ -1,7 +1,21 @@
 ﻿import type { Track, TrackListResponse } from '@baize/types'
 import type { LyricLine } from '@baize/utils'
 import { formatTime, parseLrc } from '@baize/utils'
-import { Download, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react'
+import {
+    Download,
+    ListMusic,
+    Pause,
+    Play,
+    Repeat,
+    Repeat1,
+    Search,
+    Shuffle,
+    SkipBack,
+    SkipForward,
+    Trash2,
+    Volume2,
+    VolumeX,
+} from 'lucide-react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -64,6 +78,8 @@ export default function App() {
     const [isPlaylistOpen, setIsPlaylistOpen] = useState(false)
     const [contextMenu, setContextMenu] = useState<TrackContextMenu | null>(null)
     const [playMode, setPlayMode] = useState<PlayMode>('sequential')
+    const [isSearchOpen, setIsSearchOpen] = useState(false)
+    const [searchKeyword, setSearchKeyword] = useState('')
 
     const currentTrack = tracks[currentIndex]
 
@@ -80,6 +96,13 @@ export default function App() {
         () => playlistTrackIds.map(trackId => trackMap.get(trackId)?.track).filter((track): track is Track => !!track),
         [playlistTrackIds, trackMap]
     )
+    const normalizedKeyword = useMemo(() => searchKeyword.trim().toLowerCase(), [searchKeyword])
+    const filteredTracks = useMemo(() => {
+        if (!normalizedKeyword) {
+            return tracks
+        }
+        return tracks.filter(track => `${track.title} ${track.artist} ${track.album}`.toLowerCase().includes(normalizedKeyword))
+    }, [tracks, normalizedKeyword])
 
     useEffect(() => {
         setVolume(readStoredVolume())
@@ -335,6 +358,10 @@ export default function App() {
         setIsPlaylistOpen(false)
     }
 
+    const removeTrackFromPlaylist = (trackId: string) => {
+        setPlaylistTrackIds(prev => prev.filter(id => id !== trackId))
+    }
+
     const onTrackContextMenu = (event: ReactMouseEvent, track: Track, index: number) => {
         event.preventDefault()
         const menuWidth = 210
@@ -508,24 +535,50 @@ export default function App() {
         <main className="app-shell">
             <section className="app-content">
                 <aside className="panel list-panel">
-                    <h2>Playlist</h2>
+                    <div className="panel-title-row">
+                        <h2>Playlist</h2>
+                        <div className="panel-title-actions">
+                            <button
+                                type="button"
+                                className="panel-search-btn"
+                                onClick={() => setIsSearchOpen(prev => !prev)}
+                                aria-label="Search tracks"
+                                title="Search tracks"
+                            >
+                                <Search size={14} />
+                            </button>
+                        </div>
+                    </div>
+                    {isSearchOpen && (
+                        <div className="track-search-wrap">
+                            <input
+                                type="text"
+                                value={searchKeyword}
+                                onChange={event => setSearchKeyword(event.target.value)}
+                                placeholder="请输入标题"
+                            />
+                        </div>
+                    )}
                     {isLoading && <p className="muted">Loading tracks...</p>}
                     {error && <p className="error">{error}</p>}
                     {!isLoading && !error && tracks.length === 0 && <p className="muted">No tracks found in ./music</p>}
                     <ul className="track-list">
-                        {tracks.map((track, index) => (
-                            <li key={track.id}>
-                                <button
-                                    type="button"
-                                    onClick={() => playTrackByIndex(index)}
-                                    onContextMenu={event => onTrackContextMenu(event, track, index)}
-                                    className={index === currentIndex ? 'track-item active' : 'track-item'}
-                                >
-                                    <span className="track-title">{track.title}</span>
-                                    <span className="track-meta">{track.artist}</span>
-                                </button>
-                            </li>
-                        ))}
+                        {filteredTracks.map((track, index) => {
+                            const sourceIndex = trackMap.get(track.id)?.index ?? index
+                            return (
+                                <li key={track.id}>
+                                    <button
+                                        type="button"
+                                        onClick={() => playTrackByIndex(sourceIndex)}
+                                        onContextMenu={event => onTrackContextMenu(event, track, sourceIndex)}
+                                        className={sourceIndex === currentIndex ? 'track-item active' : 'track-item'}
+                                    >
+                                        <span className="track-title">{track.title}</span>
+                                        <span className="track-meta">{track.artist}</span>
+                                    </button>
+                                </li>
+                            )
+                        })}
                     </ul>
                 </aside>
 
@@ -700,8 +753,21 @@ export default function App() {
                             <ul className="playlist-popover-list">
                                 {playlistTracks.map(track => (
                                     <li key={track.id}>
-                                        <button type="button" onClick={() => playTrackFromPlaylist(track.id)}>
+                                        <button
+                                            type="button"
+                                            className="playlist-track-play"
+                                            onClick={() => playTrackFromPlaylist(track.id)}
+                                        >
                                             {track.title}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="playlist-track-remove"
+                                            onClick={() => removeTrackFromPlaylist(track.id)}
+                                            aria-label={`Remove ${track.title}`}
+                                            title="Remove from playlist"
+                                        >
+                                            <Trash2 size={14} />
                                         </button>
                                     </li>
                                 ))}

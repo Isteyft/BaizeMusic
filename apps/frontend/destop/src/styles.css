@@ -223,6 +223,23 @@ body {
     gap: 8px;
 }
 
+.panel-search-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    background: rgba(30, 41, 59, 0.85);
+    color: #dbeafe;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.panel-search-btn:hover {
+    background: rgba(14, 116, 144, 0.45);
+}
+
 .panel-refresh-btn {
     width: 28px;
     height: 28px;
@@ -259,6 +276,20 @@ body {
 
 .panel-download-list-btn:hover {
     background: rgba(14, 116, 144, 0.45);
+}
+
+.track-search-wrap {
+    margin-bottom: 10px;
+}
+
+.track-search-wrap input {
+    width: 100%;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    background: rgba(15, 23, 42, 0.88);
+    border-radius: 8px;
+    color: #e2e8f0;
+    padding: 8px 10px;
+    outline: none;
 }
 
 .download-panel {
@@ -671,8 +702,16 @@ body {
     gap: 6px;
 }
 
-.playlist-popover-list button {
+.playlist-popover-list li {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    align-items: center;
+}
+
+.playlist-popover .playlist-track-play {
     width: 100%;
+    height: auto;
     border: 0;
     border-radius: 8px;
     background: rgba(30, 41, 59, 0.9);
@@ -682,8 +721,26 @@ body {
     cursor: pointer;
 }
 
-.playlist-popover-list button:hover {
+.playlist-popover .playlist-track-play:hover {
     background: rgba(14, 116, 144, 0.55);
+}
+
+.playlist-popover .playlist-track-remove {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    background: rgba(30, 41, 59, 0.9);
+    color: #e2e8f0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.playlist-popover .playlist-track-remove:hover {
+    background: rgba(220, 38, 38, 0.7);
+    border-color: rgba(252, 165, 165, 0.7);
 }
 
 .volume-popover {
