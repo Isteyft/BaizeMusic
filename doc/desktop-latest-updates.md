@@ -62,6 +62,15 @@ This document summarizes the recent desktop-side updates in `apps/frontend/desto
     -   `futures-util`
     -   `lofty`
 
+## Single Instance (Desktop)
+
+-   Desktop app is now limited to a single running instance.
+-   Added Tauri single-instance plugin:
+    -   `tauri-plugin-single-instance`
+-   When a second launch is attempted:
+    -   no new process window is created
+    -   existing `main` window is shown and focused
+
 ## Files Updated
 
 -   `apps/frontend/destop/index.html`
@@ -70,6 +79,7 @@ This document summarizes the recent desktop-side updates in `apps/frontend/desto
 -   `apps/frontend/destop/src/styles.css`
 -   `apps/frontend/destop/src-tauri/tauri.conf.json`
 -   `apps/frontend/destop/src-tauri/Cargo.toml`
+-   `apps/frontend/destop/src-tauri/Cargo.lock`
 -   `apps/frontend/destop/src-tauri/src/main.rs`
 
 ## Validation

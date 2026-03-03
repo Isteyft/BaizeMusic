@@ -235,7 +235,7 @@ export default function App() {
                             setError(serverError ?? localError)
                         }
                     } else if (serverError && localTracks.length > 0) {
-                        setError('服务器不可用，当前显示本地目录歌曲')
+                        setError(null)
                     } else if (localError && serverTracks.length > 0) {
                         setError('本地目录扫描失败，当前显示服务器歌曲')
                     } else {

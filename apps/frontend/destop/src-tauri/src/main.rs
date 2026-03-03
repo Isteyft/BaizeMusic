@@ -484,6 +484,9 @@ fn pick_music_dir() -> Result<Option<String>, String> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main_window(app);
+        }))
         .setup(|app| {
             let show_item = MenuItemBuilder::new("显示主窗口")
                 .id("show")
