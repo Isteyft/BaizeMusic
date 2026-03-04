@@ -1,7 +1,7 @@
 ﻿import type { Track } from '@baize/types'
 import { formatTime, type LyricLine, parseLrc } from '@baize/utils'
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
-import { Audio, type AVPlaybackStatusSuccess } from 'expo-av'
+import { Audio, type AVPlaybackStatusSuccess, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system'
 import { StatusBar } from 'expo-status-bar'
@@ -363,6 +363,20 @@ export default function App() {
     useEffect(() => {
         trackMapRef.current = trackMap
     }, [trackMap])
+
+    useEffect(() => {
+        void Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+            playsInSilentModeIOS: true,
+            staysActiveInBackground: true,
+            interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+            shouldDuckAndroid: true,
+            playThroughEarpieceAndroid: false,
+        }).catch(() => {
+            setError(prev => prev ?? '音频会话初始化失败，后台播放可能不可用')
+        })
+    }, [])
 
     useEffect(() => {
         setPlaylistTrackIds(prev => prev.filter(trackId => trackMap.has(trackId)))
