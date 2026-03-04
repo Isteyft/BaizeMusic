@@ -108,3 +108,59 @@ This document summarizes the recent desktop-side updates in `apps/frontend/desto
 
 -   `apps/frontend/destop/src/App.tsx`
 -   `apps/frontend/destop/src/styles.css`
+
+## 2026-03-04 Incremental Update (Network Music Add)
+
+### New Features
+
+-   Added desktop "Network Music" entry in title bar.
+-   Added network music management panel:
+    -   add a remote track by `http/https` URL
+    -   optional metadata inputs:
+        -   title
+        -   artist
+        -   album
+        -   cover URL
+        -   lyric URL
+-   Added network track persistence via localStorage:
+    -   key: `baize_desktop_network_tracks`
+    -   supports single delete and clear all
+-   Merged stored network tracks into desktop effective track list:
+    -   participate in list rendering
+    -   participate in search/filter
+    -   participate in existing playback/queue flow
+
+### UX Notes
+
+-   Empty-state hint now guides desktop users to add either:
+    -   local music directory
+    -   network music
+
+### Files Updated
+
+-   `apps/frontend/destop/src/App.tsx`
+-   `apps/frontend/destop/src/styles.css`
+
+### Validation
+
+-   `pnpm --filter @baize/destop typecheck`
+
+## 2026-03-04 Incremental Update (Network Track Context Delete)
+
+### UX Changes
+
+-   Added context-menu action `删除歌曲` for desktop network tracks.
+-   Visibility rule:
+    -   show `删除歌曲` only when the selected track id is network type (`online-*`).
+-   Delete action now reuses existing network-track removal flow:
+    -   remove from `networkTracks`
+    -   persist to localStorage key `baize_desktop_network_tracks`
+-   Context-menu height is now computed dynamically based on visible actions to avoid viewport clipping.
+
+### Files Updated
+
+-   `apps/frontend/destop/src/App.tsx`
+
+### Validation
+
+-   `pnpm --filter @baize/destop typecheck`

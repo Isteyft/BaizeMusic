@@ -72,6 +72,19 @@ pnpm dev:desktop
 pnpm dev:tauri
 ```
 
+## Build (from monorepo root)
+
+```bash
+# build desktop + android in parallel
+pnpm build
+
+# build desktop only (Tauri bundle)
+pnpm build:desktop
+
+# build android only (release APK)
+pnpm build:android
+```
+
 ## Main Features
 
 ### Shared player features (Web + Desktop)

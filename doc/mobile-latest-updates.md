@@ -271,3 +271,128 @@ pnpm --filter @baize/mobile dev
 -   `apps/frontend/mobile/android/app/src/main/res/values/strings.xml`
 -   `apps/frontend/mobile/android/app/src/main/res/mipmap-*/baize_launcher*.png`
 -   `doc/mobile-latest-updates.md`
+
+## 2026-03-04 Incremental Update (Build/Network Error Logs + Fix Record)
+
+### Build Error Log Snapshot (Before Fix)
+
+-   Command sequence used (problematic order):
+    -   `.\gradlew clean assembleRelease`
+    -   then set:
+        -   `$env:NODE_ENV='production'`
+        -   `$env:EXPO_NO_METRO_WORKSPACE_ROOT='1'`
+-   Key logs:
+    -   `The NODE_ENV environment variable is required but was not specified.`
+    -   `Error: Unable to resolve module ./index.js from E:\Projs\monorepo-dev-starter\.:`
+    -   `Task :app:createBundleReleaseJsAndAssets FAILED`
+
+### Build Fix Applied
+
+-   Root cause:
+    -   env vars were set after Gradle invocation, so Expo embed bundling still resolved from monorepo root.
+-   Fix:
+    -   set env vars before Gradle build:
+        -   `NODE_ENV=production`
+        -   `EXPO_NO_METRO_WORKSPACE_ROOT=1`
+-   Added fixed script:
+    -   `apps/frontend/mobile/scripts/build-release.ps1`
+-   Added npm script:
+    -   `pnpm --filter @baize/mobile android:release`
+
+### Runtime Streaming Error Log Snapshot (Before Fix)
+
+-   Playback error on Android:
+    -   `com.google.android.exoplayer2.upstream.HttpDataSource$HttpDataSourceException`
+    -   `java.net.UnknownServiceException: CLEARTEXT communication to m801.music.126.net not permitted by network security policy`
+
+### Network Security Fix Applied
+
+-   Added Android network security whitelist for NetEase music domain:
+    -   `apps/frontend/mobile/android/app/src/main/res/xml/network_security_config.xml`
+    -   allows cleartext only for:
+        -   `music.126.net` (`includeSubdomains="true"`)
+-   Wired config in manifest:
+    -   `apps/frontend/mobile/android/app/src/main/AndroidManifest.xml`
+    -   `<application ... android:networkSecurityConfig="@xml/network_security_config" ...>`
+
+## 2026-03-04 Incremental Update (Search + Network Track Persistence + App Name Fix)
+
+### Song Search (Mobile Side Menu)
+
+-   Added song search input in slide-out song panel.
+-   Search supports:
+    -   track title
+    -   artist
+    -   album
+-   Empty-state text for search:
+    -   `未找到匹配歌曲`
+-   Fixed filtered-list playback/index behavior:
+    -   active row highlight now matches by `track.id`
+    -   play action resolves real index via `trackMap` to avoid wrong track playback after filtering.
+
+### Network Music Import Persistence
+
+-   Added persistent storage for network track URLs in mobile settings:
+    -   `networkTrackUrls`
+-   Import flow:
+    -   when adding network music URL, it appends both:
+        -   runtime track list
+        -   persisted `networkTrackUrls`
+-   App startup restore flow:
+    -   read persisted `networkTrackUrls`
+    -   regenerate `network-*` tracks into current list
+-   Delete flow sync:
+    -   deleting a network track removes its URL from persisted settings.
+-   Fixed data merge behavior on backend track reload:
+    -   previously only `local-*` tracks were preserved
+    -   now preserves all user-imported tracks:
+        -   `local-*`
+        -   `network-*`
+
+### App Name Garbled Text Fix
+
+-   Fixed Android app name mojibake:
+    -   `apps/frontend/mobile/android/app/src/main/res/values/strings.xml`
+        -   `app_name` -> `白泽音乐`
+    -   `apps/frontend/mobile/android/app/src/main/AndroidManifest.xml`
+        -   `android:label` changed to `@string/app_name` for stable source-of-truth.
+
+### Files Updated In This Round
+
+-   `apps/frontend/mobile/App.tsx`
+-   `apps/frontend/mobile/android/app/src/main/res/values/strings.xml`
+-   `apps/frontend/mobile/android/app/src/main/AndroidManifest.xml`
+-   `doc/mobile-latest-updates.md`
+
+## 2026-03-04 Incremental Update (Network Music Form + Rich Persistence)
+
+### Network Music Add Flow (UI)
+
+-   Changed `添加网络音乐` from inline input to modal form.
+-   Form fields:
+    -   music URL (required)
+    -   song title (optional)
+    -   artist (optional)
+    -   lyric URL (optional)
+-   Validation:
+    -   music URL must start with `http://` or `https://`
+    -   lyric URL (if filled) must start with `http://` or `https://`
+
+### Network Music Persistence (Data Model Upgrade)
+
+-   Upgraded mobile settings schema from URL-only list to structured list:
+    -   from: `networkTrackUrls: string[]`
+    -   to: `networkTracks: Array<{ url; title?; artist?; lyricUrl? }>`
+-   Startup restore now reconstructs network tracks with custom title/artist/lyric URL.
+-   Delete network track now syncs back to persisted `networkTracks`.
+
+### Backward Compatibility
+
+-   Added migration compatibility on settings load:
+    -   if old `networkTrackUrls` exists and new `networkTracks` is empty,
+        it auto-converts old URLs into new structured items.
+
+### Files Updated In This Round
+
+-   `apps/frontend/mobile/App.tsx`
+-   `doc/mobile-latest-updates.md`

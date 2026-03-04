@@ -145,3 +145,18 @@ This document summarizes the latest implementation updates in the music player.
 ### Verification
 
 -   Re-ran full Android build with the same parameters as failing command and confirmed `BUILD SUCCESSFUL`.
+
+## 2026-03-04 Incremental Update (Root Build Integration)
+
+### Monorepo Scripts
+
+-   Added root-level build entrypoints for desktop and Android packaging:
+    -   `pnpm build` (parallel: desktop + Android)
+    -   `pnpm build:desktop` (`@baize/destop` -> `tauri:build`)
+    -   `pnpm build:android` (`@baize/mobile` -> `android:release`)
+-   Added usage section in README for root build commands.
+
+### Files Updated
+
+-   `package.json`
+-   `README.md`

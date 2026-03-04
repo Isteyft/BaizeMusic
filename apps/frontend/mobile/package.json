@@ -8,6 +8,7 @@
     "dev": "expo start --clear",
     "android": "expo run:android --device",
     "emulator": "powershell -ExecutionPolicy Bypass -File ./scripts/start-emulator.ps1",
+    "android:release": "powershell -ExecutionPolicy Bypass -File ./scripts/build-release.ps1",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "web:offline": "expo start --web --offline",

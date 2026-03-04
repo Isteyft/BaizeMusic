@@ -13,12 +13,14 @@ import {
     type GestureResponderEvent,
     Image,
     type LayoutChangeEvent,
+    Modal,
     Platform,
     Pressable,
     SafeAreaView,
     StatusBar as NativeStatusBar,
     StyleSheet,
     Text,
+    TextInput,
     View,
 } from 'react-native'
 
@@ -28,6 +30,19 @@ const AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'op
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp'])
 const SHARED_COVER_NAMES = new Set(['cover', 'folder', 'front', 'album', 'albumartsmall'])
 const ID3_SCAN_BYTES = 512 * 1024
+const SETTINGS_FILENAME = 'baize-mobile-settings.json'
+
+type MobileSettings = {
+    directoryUris: string[]
+    networkTracks: NetworkTrackSetting[]
+}
+
+type NetworkTrackSetting = {
+    url: string
+    title?: string
+    artist?: string
+    lyricUrl?: string
+}
 
 function resolveApiBaseUrl() {
     const fromEnv = process.env.EXPO_PUBLIC_API_BASE_URL?.trim()
@@ -270,6 +285,122 @@ function toUserFriendlyError(error: unknown, fallback: string) {
     return isNetworkError ? fallback : error.message
 }
 
+function getSettingsFileUri() {
+    const docDir = FileSystem.documentDirectory
+    if (!docDir) return null
+    return `${docDir}${SETTINGS_FILENAME}`
+}
+
+function normalizeDirectoryUris(input: unknown): string[] {
+    if (!Array.isArray(input)) return []
+    const unique = new Set<string>()
+    for (const item of input) {
+        if (typeof item !== 'string') continue
+        const normalized = item.trim()
+        if (!normalized) continue
+        unique.add(normalized)
+    }
+    return Array.from(unique)
+}
+
+function normalizeNetworkTrackUrls(input: unknown): string[] {
+    if (!Array.isArray(input)) return []
+    const unique = new Set<string>()
+    for (const item of input) {
+        if (typeof item !== 'string') continue
+        const normalized = item.trim()
+        if (!normalized) continue
+        if (!/^https?:\/\//i.test(normalized)) continue
+        unique.add(normalized)
+    }
+    return Array.from(unique)
+}
+
+function normalizeNetworkTrackSettings(input: unknown): NetworkTrackSetting[] {
+    if (!Array.isArray(input)) return []
+    const unique = new Set<string>()
+    const normalizedItems: NetworkTrackSetting[] = []
+    for (const item of input) {
+        let url = ''
+        let title: string | undefined
+        let artist: string | undefined
+        let lyricUrl: string | undefined
+
+        if (typeof item === 'string') {
+            url = item.trim()
+        } else if (item && typeof item === 'object') {
+            const maybe = item as { url?: unknown; title?: unknown; artist?: unknown; lyricUrl?: unknown }
+            url = typeof maybe.url === 'string' ? maybe.url.trim() : ''
+            title = typeof maybe.title === 'string' ? maybe.title.trim() || undefined : undefined
+            artist = typeof maybe.artist === 'string' ? maybe.artist.trim() || undefined : undefined
+            const rawLyricUrl = typeof maybe.lyricUrl === 'string' ? maybe.lyricUrl.trim() : ''
+            lyricUrl = rawLyricUrl && /^https?:\/\//i.test(rawLyricUrl) ? rawLyricUrl : undefined
+        }
+
+        if (!url || !/^https?:\/\//i.test(url) || unique.has(url)) continue
+        unique.add(url)
+        normalizedItems.push({ url, title, artist, lyricUrl })
+    }
+    return normalizedItems
+}
+
+function createNetworkTrack(input: NetworkTrackSetting): Track {
+    const title = input.title?.trim() || getFileBaseName(input.url) || '网络音乐'
+    const artist = input.artist?.trim() || '网络音乐'
+    return {
+        id: `network-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        title,
+        artist,
+        album: '网络导入',
+        duration: 0,
+        streamUrl: input.url,
+        lyricUrl: input.lyricUrl,
+    }
+}
+
+function isUserImportedTrack(track: Track) {
+    return track.id.startsWith('local-') || track.id.startsWith('network-')
+}
+
+async function loadMobileSettings(): Promise<MobileSettings> {
+    const uri = getSettingsFileUri()
+    if (!uri) return { directoryUris: [], networkTracks: [] }
+    try {
+        const info = await FileSystem.getInfoAsync(uri)
+        if (!info.exists) return { directoryUris: [], networkTracks: [] }
+        const raw = await FileSystem.readAsStringAsync(uri)
+        const parsed = JSON.parse(raw) as { directoryUris?: unknown; networkTracks?: unknown; networkTrackUrls?: unknown }
+        const networkTracks = normalizeNetworkTrackSettings(parsed.networkTracks)
+        if (networkTracks.length === 0) {
+            const legacy = normalizeNetworkTrackUrls(parsed.networkTrackUrls).map(url => ({ url }))
+            return {
+                directoryUris: normalizeDirectoryUris(parsed.directoryUris),
+                networkTracks: legacy,
+            }
+        }
+        return {
+            directoryUris: normalizeDirectoryUris(parsed.directoryUris),
+            networkTracks,
+        }
+    } catch {
+        return { directoryUris: [], networkTracks: [] }
+    }
+}
+
+async function saveMobileSettings(settings: MobileSettings) {
+    const uri = getSettingsFileUri()
+    if (!uri) return
+    const payload = JSON.stringify(
+        {
+            directoryUris: normalizeDirectoryUris(settings.directoryUris),
+            networkTracks: normalizeNetworkTrackSettings(settings.networkTracks),
+        },
+        null,
+        2
+    )
+    await FileSystem.writeAsStringAsync(uri, payload, { encoding: FileSystem.EncodingType.UTF8 })
+}
+
 export default function App() {
     const soundRef = useRef<Audio.Sound | null>(null)
     const currentIndexRef = useRef(-1)
@@ -297,6 +428,16 @@ export default function App() {
     const [progressWidth, setProgressWidth] = useState(0)
     const [isSeeking, setIsSeeking] = useState(false)
     const [seekPreviewMs, setSeekPreviewMs] = useState(0)
+    const [directoryUris, setDirectoryUris] = useState<string[]>([])
+    const [networkTracks, setNetworkTracks] = useState<NetworkTrackSetting[]>([])
+    const [settingsHydrated, setSettingsHydrated] = useState(false)
+    const [addMenuVisible, setAddMenuVisible] = useState(false)
+    const [networkFormVisible, setNetworkFormVisible] = useState(false)
+    const [networkFormUrl, setNetworkFormUrl] = useState('')
+    const [networkFormTitle, setNetworkFormTitle] = useState('')
+    const [networkFormArtist, setNetworkFormArtist] = useState('')
+    const [networkFormLyricUrl, setNetworkFormLyricUrl] = useState('')
+    const [songSearchKeyword, setSongSearchKeyword] = useState('')
     const androidTopOffset = Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) : 0
 
     const currentTrack = currentIndex >= 0 ? tracks[currentIndex] : undefined
@@ -313,6 +454,16 @@ export default function App() {
         () => playlistTrackIds.map(trackId => trackMap.get(trackId)?.track).filter((track): track is Track => !!track),
         [playlistTrackIds, trackMap]
     )
+    const filteredTracks = useMemo(() => {
+        const keyword = songSearchKeyword.trim().toLowerCase()
+        if (!keyword) return tracks
+        return tracks.filter(track => {
+            const title = track.title.toLowerCase()
+            const artist = track.artist.toLowerCase()
+            const album = track.album.toLowerCase()
+            return title.includes(keyword) || artist.includes(keyword) || album.includes(keyword)
+        })
+    }, [songSearchKeyword, tracks])
     const activeLyricIndex = useMemo(() => {
         if (lyricLines.length === 0) {
             return -1
@@ -402,7 +553,7 @@ export default function App() {
                 }))
                 if (!cancelled) {
                     setTracks(prev => {
-                        const localTracks = prev.filter(item => item.id.startsWith('local-'))
+                        const localTracks = prev.filter(item => isUserImportedTrack(item))
                         return [...normalized, ...localTracks]
                     })
                     setCurrentIndex(prev => (prev >= 0 ? prev : normalized.length > 0 ? 0 : -1))
@@ -637,9 +788,47 @@ export default function App() {
         setPlaylistTrackIds([])
     }
 
-    const appendLocalTracks = (incoming: Track[]) => {
+    const removeTrackFromLibrary = async (trackId: string) => {
+        const removingIndex = tracks.findIndex(track => track.id === trackId)
+        if (removingIndex < 0) return
+        const removingTrack = tracks[removingIndex]
+
+        const removingCurrent = currentIndex === removingIndex
+        const nextLength = tracks.length - 1
+
+        setTracks(prev => prev.filter(track => track.id !== trackId))
+        setPlaylistTrackIds(prev => prev.filter(id => id !== trackId))
+        if (removingTrack?.id.startsWith('network-')) {
+            setNetworkTracks(prev => prev.filter(item => item.url !== removingTrack.streamUrl))
+        }
+        setCurrentIndex(prev => {
+            if (prev < 0) return -1
+            if (prev === removingIndex) {
+                if (nextLength <= 0) return -1
+                return Math.min(removingIndex, nextLength - 1)
+            }
+            if (prev > removingIndex) return prev - 1
+            return prev
+        })
+
+        if (removingCurrent && soundRef.current) {
+            await soundRef.current.unloadAsync()
+            soundRef.current = null
+            setIsPlaying(false)
+            setPositionMs(0)
+            setDurationMs(0)
+            setIsSeeking(false)
+            setSeekPreviewMs(0)
+            setLyricLines([])
+        }
+        setError(null)
+    }
+
+    const appendLocalTracks = (incoming: Track[], options?: { suppressNoopError?: boolean }) => {
         if (incoming.length === 0) {
-            setError('No audio files found to add')
+            if (!options?.suppressNoopError) {
+                setError('No audio files found to add')
+            }
             return
         }
         let addedCount = 0
@@ -664,7 +853,44 @@ export default function App() {
             return merged
         })
         setCurrentIndex(prev => (prev >= 0 ? prev : 0))
-        setError(addedCount > 0 || updatedCoverCount > 0 ? null : 'These tracks are already in the list')
+        if (addedCount > 0 || updatedCoverCount > 0) {
+            setError(null)
+        } else if (!options?.suppressNoopError) {
+            setError('These tracks are already in the list')
+        }
+    }
+
+    const readAudioTracksFromDirectory = async (directoryUri: string) => {
+        const uris = (await FileSystem.StorageAccessFramework.readDirectoryAsync(directoryUri)) as string[]
+        const coverMap = resolveDirectoryCoverMap(uris)
+        return await Promise.all(
+            uris
+                .filter(uri => AUDIO_EXTENSIONS.has(getFileExtension(uri)))
+                .map(async uri => {
+                    const stem = getFileBaseName(uri).toLowerCase()
+                    const fallbackCover = coverMap.coverSuffixStem.get(stem) ?? coverMap.exactStemCover.get(stem) ?? coverMap.sharedCover
+                    const embeddedCover = await extractEmbeddedCoverDataUriFromAudioUri(uri)
+                    const coverUrl = embeddedCover ?? fallbackCover
+                    return createLocalTrack(uri, getFileName(uri), coverUrl)
+                })
+        )
+    }
+
+    const importFromDirectoryUris = async (incomingDirectoryUris: string[]) => {
+        if (!FileSystem.StorageAccessFramework) return { imported: [] as Track[], readableDirectoryUris: [] as string[] }
+
+        const imported: Track[] = []
+        const readableDirectoryUris: string[] = []
+        for (const directoryUri of normalizeDirectoryUris(incomingDirectoryUris)) {
+            try {
+                const nextTracks = await readAudioTracksFromDirectory(directoryUri)
+                imported.push(...nextTracks)
+                readableDirectoryUris.push(directoryUri)
+            } catch {
+                continue
+            }
+        }
+        return { imported, readableDirectoryUris }
     }
 
     const importAudioFiles = async () => {
@@ -708,22 +934,89 @@ export default function App() {
         const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync()
         if (!permission.granted || !permission.directoryUri) return
 
-        const uris = (await FileSystem.StorageAccessFramework.readDirectoryAsync(permission.directoryUri)) as string[]
-        const coverMap = resolveDirectoryCoverMap(uris)
-        const nextTracks = await Promise.all(
-            uris
-                .filter(uri => AUDIO_EXTENSIONS.has(getFileExtension(uri)))
-                .map(async uri => {
-                    const stem = getFileBaseName(uri).toLowerCase()
-                    const fallbackCover = coverMap.coverSuffixStem.get(stem) ?? coverMap.exactStemCover.get(stem) ?? coverMap.sharedCover
-                    const embeddedCover = await extractEmbeddedCoverDataUriFromAudioUri(uri)
-                    const coverUrl = embeddedCover ?? fallbackCover
-                    return createLocalTrack(uri, getFileName(uri), coverUrl)
-                })
-        )
+        const { imported, readableDirectoryUris } = await importFromDirectoryUris([permission.directoryUri])
+        const nextTracks = imported
 
         appendLocalTracks(nextTracks)
+        if (readableDirectoryUris.length > 0) {
+            setDirectoryUris(prev => normalizeDirectoryUris([...prev, ...readableDirectoryUris]))
+        }
     }
+
+    const closeNetworkForm = () => {
+        setNetworkFormVisible(false)
+        setNetworkFormUrl('')
+        setNetworkFormTitle('')
+        setNetworkFormArtist('')
+        setNetworkFormLyricUrl('')
+    }
+
+    const importNetworkMusic = () => {
+        const trimmedUrl = networkFormUrl.trim()
+        const trimmedTitle = networkFormTitle.trim()
+        const trimmedArtist = networkFormArtist.trim()
+        const trimmedLyricUrl = networkFormLyricUrl.trim()
+        if (!trimmedUrl) {
+            setError('请输入网络音乐 URL')
+            return
+        }
+        if (!/^https?:\/\//i.test(trimmedUrl)) {
+            setError('网络音乐 URL 必须以 http:// 或 https:// 开头')
+            return
+        }
+        if (trimmedLyricUrl && !/^https?:\/\//i.test(trimmedLyricUrl)) {
+            setError('歌词 URL 必须以 http:// 或 https:// 开头')
+            return
+        }
+
+        const nextNetworkTrack: NetworkTrackSetting = {
+            url: trimmedUrl,
+            title: trimmedTitle || undefined,
+            artist: trimmedArtist || undefined,
+            lyricUrl: trimmedLyricUrl || undefined,
+        }
+
+        const nextTrack: Track = createNetworkTrack(nextNetworkTrack)
+        appendLocalTracks([nextTrack])
+        setNetworkTracks(prev => normalizeNetworkTrackSettings([...prev, nextNetworkTrack]))
+        closeNetworkForm()
+        setAddMenuVisible(false)
+    }
+
+    useEffect(() => {
+        let cancelled = false
+        const hydrateSettings = async () => {
+            const settings = await loadMobileSettings()
+            if (cancelled) return
+            setDirectoryUris(settings.directoryUris)
+            setNetworkTracks(settings.networkTracks)
+
+            const { imported, readableDirectoryUris } = await importFromDirectoryUris(settings.directoryUris)
+            if (cancelled) return
+
+            appendLocalTracks(imported, { suppressNoopError: true })
+            appendLocalTracks(
+                settings.networkTracks.map(item => createNetworkTrack(item)),
+                { suppressNoopError: true }
+            )
+            if (readableDirectoryUris.length !== settings.directoryUris.length) {
+                setDirectoryUris(readableDirectoryUris)
+                setError(prev => prev ?? '部分目录访问权限已失效，请重新添加目录')
+            }
+            setSettingsHydrated(true)
+        }
+        void hydrateSettings()
+        return () => {
+            cancelled = true
+        }
+    }, [])
+
+    useEffect(() => {
+        if (!settingsHydrated) return
+        void saveMobileSettings({ directoryUris, networkTracks }).catch(() => {
+            setError(prev => prev ?? '目录配置保存失败')
+        })
+    }, [directoryUris, networkTracks, settingsHydrated])
 
     const openMenu = () => {
         setMenuVisible(true)
@@ -897,30 +1190,83 @@ export default function App() {
                             },
                         ]}
                     >
-                        <Text style={styles.menuTitle}>歌曲列表</Text>
-                        <View style={styles.importActions}>
-                            <Pressable style={styles.importButton} onPress={() => void importAudioDirectory()}>
-                                <Ionicons name="folder-open" size={14} color="#dbeafe" />
-                                <Text style={styles.importButtonText}>添加目录</Text>
-                            </Pressable>
-                            <Pressable style={styles.importButton} onPress={() => void importAudioFiles()}>
-                                <Ionicons name="add-circle" size={14} color="#dbeafe" />
-                                <Text style={styles.importButtonText}>添加歌曲</Text>
+                        <View style={styles.menuHeaderRow}>
+                            <Text style={styles.menuTitle}>歌曲列表</Text>
+                            <Pressable
+                                style={styles.menuAddToggleButton}
+                                onPress={() => {
+                                    setAddMenuVisible(prev => !prev)
+                                    if (addMenuVisible) {
+                                        closeNetworkForm()
+                                    }
+                                }}
+                            >
+                                <Ionicons name={addMenuVisible ? 'close' : 'add'} size={18} color="#dbeafe" />
                             </Pressable>
                         </View>
+                        {addMenuVisible && (
+                            <View style={styles.addMenuPanel}>
+                                <Pressable
+                                    style={styles.importButton}
+                                    onPress={() => {
+                                        void importAudioDirectory()
+                                        setAddMenuVisible(false)
+                                        closeNetworkForm()
+                                    }}
+                                >
+                                    <Ionicons name="folder-open" size={14} color="#dbeafe" />
+                                    <Text style={styles.importButtonText}>添加目录</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={styles.importButton}
+                                    onPress={() => {
+                                        void importAudioFiles()
+                                        setAddMenuVisible(false)
+                                        closeNetworkForm()
+                                    }}
+                                >
+                                    <Ionicons name="add-circle" size={14} color="#dbeafe" />
+                                    <Text style={styles.importButtonText}>添加歌曲</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={styles.importButton}
+                                    onPress={() => {
+                                        setNetworkFormVisible(true)
+                                        setAddMenuVisible(false)
+                                    }}
+                                >
+                                    <Ionicons name="globe-outline" size={14} color="#dbeafe" />
+                                    <Text style={styles.importButtonText}>添加网络音乐</Text>
+                                </Pressable>
+                            </View>
+                        )}
+                        <TextInput
+                            value={songSearchKeyword}
+                            onChangeText={setSongSearchKeyword}
+                            placeholder="搜索歌曲/歌手/专辑"
+                            placeholderTextColor="#94a3b8"
+                            style={styles.songSearchInput}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                        />
                         <FlatList
-                            data={tracks}
+                            data={filteredTracks}
                             keyExtractor={item => item.id}
-                            ListEmptyComponent={<Text style={styles.menuEmpty}>暂无歌曲</Text>}
-                            renderItem={({ item, index }) => {
+                            ListEmptyComponent={
+                                <Text style={styles.menuEmpty}>{songSearchKeyword.trim() ? '未找到匹配歌曲' : '暂无歌曲'}</Text>
+                            }
+                            renderItem={({ item }) => {
                                 const inPlaylist = playlistTrackIds.includes(item.id)
-                                const active = currentIndex === index
+                                const active = currentTrack?.id === item.id
                                 return (
                                     <View style={styles.songItemRow}>
                                         <Pressable
                                             style={[styles.songItemLeft, active && styles.songItemLeftActive]}
                                             onPress={() => {
-                                                void playTrack(index)
+                                                const found = trackMap.get(item.id)
+                                                if (found) {
+                                                    void playTrack(found.index)
+                                                }
                                                 closeMenu()
                                             }}
                                         >
@@ -931,9 +1277,14 @@ export default function App() {
                                                 {item.artist}
                                             </Text>
                                         </Pressable>
-                                        <Pressable style={styles.songAddButton} onPress={() => addTrackToPlaylist(item)}>
-                                            <Ionicons name={inPlaylist ? 'checkmark' : 'add'} size={18} color="#fff" />
-                                        </Pressable>
+                                        <View style={styles.songActionButtons}>
+                                            <Pressable style={styles.songAddButton} onPress={() => addTrackToPlaylist(item)}>
+                                                <Ionicons name={inPlaylist ? 'checkmark' : 'add'} size={18} color="#fff" />
+                                            </Pressable>
+                                            <Pressable style={styles.songDeleteButton} onPress={() => void removeTrackFromLibrary(item.id)}>
+                                                <Ionicons name="trash-outline" size={16} color="#fff" />
+                                            </Pressable>
+                                        </View>
                                     </View>
                                 )
                             }}
@@ -941,6 +1292,55 @@ export default function App() {
                     </Animated.View>
                 </View>
             )}
+
+            <Modal visible={networkFormVisible} transparent animationType="fade" onRequestClose={closeNetworkForm}>
+                <View style={styles.networkFormOverlay}>
+                    <Pressable style={styles.networkFormMask} onPress={closeNetworkForm} />
+                    <View style={styles.networkFormCard}>
+                        <Text style={styles.networkFormTitle}>添加网络音乐</Text>
+                        <TextInput
+                            value={networkFormUrl}
+                            onChangeText={setNetworkFormUrl}
+                            placeholder="音乐 URL (必填)"
+                            placeholderTextColor="#94a3b8"
+                            style={styles.networkInput}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                        />
+                        <TextInput
+                            value={networkFormTitle}
+                            onChangeText={setNetworkFormTitle}
+                            placeholder="歌曲名字 (选填)"
+                            placeholderTextColor="#94a3b8"
+                            style={styles.networkInput}
+                        />
+                        <TextInput
+                            value={networkFormArtist}
+                            onChangeText={setNetworkFormArtist}
+                            placeholder="作者 (选填)"
+                            placeholderTextColor="#94a3b8"
+                            style={styles.networkInput}
+                        />
+                        <TextInput
+                            value={networkFormLyricUrl}
+                            onChangeText={setNetworkFormLyricUrl}
+                            placeholder="歌词 URL (选填)"
+                            placeholderTextColor="#94a3b8"
+                            style={styles.networkInput}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                        />
+                        <View style={styles.networkFormActions}>
+                            <Pressable style={[styles.networkSubmitButton, styles.networkCancelButton]} onPress={closeNetworkForm}>
+                                <Text style={styles.networkSubmitText}>取消</Text>
+                            </Pressable>
+                            <Pressable style={styles.networkSubmitButton} onPress={importNetworkMusic}>
+                                <Text style={styles.networkSubmitText}>确认添加</Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 
             {playlistVisible && (
                 <View style={styles.playlistOverlay}>
@@ -1193,15 +1593,26 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 17,
         fontWeight: '700',
+    },
+    menuHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
         marginBottom: 12,
     },
-    importActions: {
-        flexDirection: 'row',
+    menuAddToggleButton: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#1d4ed8',
+    },
+    addMenuPanel: {
         gap: 8,
         marginBottom: 10,
     },
     importButton: {
-        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
@@ -1214,6 +1625,80 @@ const styles = StyleSheet.create({
         color: '#dbeafe',
         fontSize: 12,
         fontWeight: '600',
+    },
+    networkInputWrap: {
+        gap: 8,
+        backgroundColor: '#1e293b',
+        borderRadius: 8,
+        padding: 8,
+    },
+    networkInput: {
+        backgroundColor: '#0f172a',
+        borderWidth: 1,
+        borderColor: '#334155',
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        color: '#e2e8f0',
+        fontSize: 12,
+    },
+    networkSubmitButton: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#0369a1',
+        borderRadius: 8,
+        paddingVertical: 8,
+    },
+    networkSubmitText: {
+        color: '#e0f2fe',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    networkCancelButton: {
+        backgroundColor: '#475569',
+    },
+    networkFormOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1400,
+        elevation: 1400,
+    },
+    networkFormMask: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(2,6,23,0.5)',
+    },
+    networkFormCard: {
+        width: '88%',
+        maxWidth: 360,
+        backgroundColor: '#0f172a',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#1e293b',
+        padding: 14,
+        gap: 10,
+    },
+    networkFormTitle: {
+        color: '#e2e8f0',
+        fontSize: 15,
+        fontWeight: '700',
+        marginBottom: 2,
+    },
+    networkFormActions: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    songSearchInput: {
+        backgroundColor: '#0f172a',
+        borderWidth: 1,
+        borderColor: '#334155',
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        color: '#e2e8f0',
+        fontSize: 12,
+        marginBottom: 10,
     },
     menuEmpty: {
         color: '#94a3b8',
@@ -1251,6 +1736,17 @@ const styles = StyleSheet.create({
         height: 34,
         borderRadius: 17,
         backgroundColor: '#0ea5e9',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    songActionButtons: {
+        gap: 6,
+    },
+    songDeleteButton: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        backgroundColor: '#dc2626',
         alignItems: 'center',
         justifyContent: 'center',
     },

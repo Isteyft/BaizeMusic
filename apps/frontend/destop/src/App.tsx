@@ -8,6 +8,7 @@ import {
     Copy,
     Download,
     FolderOpen,
+    Globe,
     ListMusic,
     Minus,
     Pause,
@@ -31,6 +32,7 @@ import { createPortal } from 'react-dom'
 
 const VOLUME_STORAGE_KEY = 'baize_player_volume'
 const DESKTOP_MUSIC_DIRS_KEY = 'baize_desktop_music_dirs'
+const DESKTOP_NETWORK_TRACKS_KEY = 'baize_desktop_network_tracks'
 
 type PlayMode = 'sequential' | 'random' | 'single'
 
@@ -109,6 +111,56 @@ function saveMusicDirs(dirs: string[]) {
     window.localStorage.setItem(DESKTOP_MUSIC_DIRS_KEY, JSON.stringify(normalized))
 }
 
+function readStoredNetworkTracks(): Track[] {
+    const raw = window.localStorage.getItem(DESKTOP_NETWORK_TRACKS_KEY)
+    if (!raw) {
+        return []
+    }
+    try {
+        const parsed = JSON.parse(raw) as unknown
+        if (!Array.isArray(parsed)) {
+            return []
+        }
+        return parsed
+            .filter((item): item is Track => {
+                if (!item || typeof item !== 'object') {
+                    return false
+                }
+                const candidate = item as Partial<Track>
+                return typeof candidate.id === 'string' && typeof candidate.streamUrl === 'string'
+            })
+            .map(track => ({
+                id: track.id,
+                title: track.title?.trim() || '网络音乐',
+                artist: track.artist?.trim() || '未知歌手',
+                album: track.album?.trim() || '网络来源',
+                duration: Number.isFinite(track.duration) ? Math.max(0, Number(track.duration)) : 0,
+                streamUrl: track.streamUrl.trim(),
+                coverUrl: track.coverUrl?.trim() || undefined,
+                lyricUrl: track.lyricUrl?.trim() || undefined,
+            }))
+            .filter(track => track.streamUrl.length > 0)
+    } catch {
+        return []
+    }
+}
+
+function saveNetworkTracks(tracks: Track[]) {
+    const normalized = tracks
+        .filter(track => track.id.startsWith('online-'))
+        .map(track => ({
+            ...track,
+            title: track.title.trim(),
+            artist: track.artist.trim(),
+            album: track.album.trim(),
+            streamUrl: track.streamUrl.trim(),
+            coverUrl: track.coverUrl?.trim() || undefined,
+            lyricUrl: track.lyricUrl?.trim() || undefined,
+            duration: Number.isFinite(track.duration) ? Math.max(0, track.duration) : 0,
+        }))
+    window.localStorage.setItem(DESKTOP_NETWORK_TRACKS_KEY, JSON.stringify(normalized))
+}
+
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value))
 }
@@ -122,6 +174,8 @@ export default function App() {
     const playlistToggleRef = useRef<HTMLButtonElement>(null)
     const pathPanelRef = useRef<HTMLDivElement>(null)
     const pathPanelToggleRef = useRef<HTMLButtonElement>(null)
+    const networkPanelRef = useRef<HTMLDivElement>(null)
+    const networkPanelToggleRef = useRef<HTMLButtonElement>(null)
     const loadedTrackKeyRef = useRef<string | null>(null)
 
     const [duration, setDuration] = useState(0)
@@ -145,6 +199,14 @@ export default function App() {
     const [isPathMenuOpen, setIsPathMenuOpen] = useState(false)
     const [musicDirs, setMusicDirs] = useState<string[]>(() => readStoredMusicDirs())
     const [musicDirInput, setMusicDirInput] = useState('')
+    const [isNetworkPanelOpen, setIsNetworkPanelOpen] = useState(false)
+    const [networkTracks, setNetworkTracks] = useState<Track[]>(() => readStoredNetworkTracks())
+    const [networkUrlInput, setNetworkUrlInput] = useState('')
+    const [networkTitleInput, setNetworkTitleInput] = useState('')
+    const [networkArtistInput, setNetworkArtistInput] = useState('')
+    const [networkAlbumInput, setNetworkAlbumInput] = useState('')
+    const [networkCoverInput, setNetworkCoverInput] = useState('')
+    const [networkLyricInput, setNetworkLyricInput] = useState('')
     const [isWindowMaximized, setIsWindowMaximized] = useState(false)
     const [refreshNonce, setRefreshNonce] = useState(0)
     const [isDownloadPanelOpen, setIsDownloadPanelOpen] = useState(false)
@@ -229,7 +291,7 @@ export default function App() {
                     }
                 }
 
-                const mergedTracks = [...serverTracks, ...localTracks]
+                const mergedTracks = [...serverTracks, ...localTracks, ...networkTracks]
                 if (!cancelled) {
                     const currentTrackId = currentTrack?.id
                     const preservedIndex = currentTrackId ? mergedTracks.findIndex(track => track.id === currentTrackId) : -1
@@ -240,7 +302,7 @@ export default function App() {
                             if (localError) {
                                 setError(`本地目录扫描失败，请检查目录配置：${localError}`)
                             } else {
-                                setError('未获取到歌曲，请添加音乐目录')
+                                setError('未获取到歌曲，请添加音乐目录或网络音乐')
                             }
                         } else {
                             setError(serverError ?? localError)
@@ -269,7 +331,7 @@ export default function App() {
         return () => {
             cancelled = true
         }
-    }, [desktopMode, musicDirs, refreshNonce])
+    }, [desktopMode, musicDirs, networkTracks, refreshNonce])
 
     useEffect(() => {
         setCoverFailed(false)
@@ -422,6 +484,22 @@ export default function App() {
     }, [isPathMenuOpen])
 
     useEffect(() => {
+        if (!isNetworkPanelOpen) {
+            return
+        }
+        const closeWhenClickOutside = (event: MouseEvent) => {
+            const target = event.target as Node | null
+            const inPanel = !!(networkPanelRef.current && target && networkPanelRef.current.contains(target))
+            const inToggle = !!(networkPanelToggleRef.current && target && networkPanelToggleRef.current.contains(target))
+            if (!inPanel && !inToggle) {
+                setIsNetworkPanelOpen(false)
+            }
+        }
+        window.addEventListener('mousedown', closeWhenClickOutside)
+        return () => window.removeEventListener('mousedown', closeWhenClickOutside)
+    }, [isNetworkPanelOpen])
+
+    useEffect(() => {
         if (!desktopMode) {
             return
         }
@@ -490,6 +568,7 @@ export default function App() {
     }
 
     const isLocalTrack = (track?: Track): boolean => !!track && track.id.startsWith('local-')
+    const isNetworkTrack = (track?: Track): boolean => !!track && track.id.startsWith('online-')
 
     const downloadTrack = async (track: Track) => {
         if (isLocalTrack(track)) {
@@ -585,7 +664,8 @@ export default function App() {
     const onTrackContextMenu = (event: ReactMouseEvent, track: Track, index: number) => {
         event.preventDefault()
         const menuWidth = 210
-        const menuHeight = 132
+        const menuItemCount = 2 + (!isLocalTrack(track) && hasDownloadTargetDir ? 1 : 0) + (isNetworkTrack(track) ? 1 : 0)
+        const menuHeight = 16 + menuItemCount * 40
         setContextMenu({
             x: clamp(event.clientX, 8, window.innerWidth - menuWidth - 8),
             y: clamp(event.clientY, 8, window.innerHeight - menuHeight - 8),
@@ -784,6 +864,67 @@ export default function App() {
         }
     }
 
+    const onAddNetworkTrack = () => {
+        const nextStreamUrl = networkUrlInput.trim()
+        if (!nextStreamUrl) {
+            setError('请先输入网络音乐链接')
+            return
+        }
+        try {
+            const parsed = new URL(nextStreamUrl)
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                throw new Error('仅支持 http/https 网络链接')
+            }
+            const nextTrack: Track = {
+                id: `online-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                title: networkTitleInput.trim() || '网络音乐',
+                artist: networkArtistInput.trim() || '未知歌手',
+                album: networkAlbumInput.trim() || '网络来源',
+                duration: 0,
+                streamUrl: parsed.toString(),
+                coverUrl: networkCoverInput.trim() || undefined,
+                lyricUrl: networkLyricInput.trim() || undefined,
+            }
+            setNetworkTracks(prev => {
+                if (prev.some(item => item.streamUrl === nextTrack.streamUrl)) {
+                    return prev
+                }
+                const next = [nextTrack, ...prev]
+                saveNetworkTracks(next)
+                return next
+            })
+            setNetworkUrlInput('')
+            setNetworkTitleInput('')
+            setNetworkArtistInput('')
+            setNetworkAlbumInput('')
+            setNetworkCoverInput('')
+            setNetworkLyricInput('')
+            setError(null)
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : '网络音乐链接格式错误')
+        }
+    }
+
+    const onRemoveNetworkTrack = (trackId: string) => {
+        setNetworkTracks(prev => {
+            const next = prev.filter(item => item.id !== trackId)
+            saveNetworkTracks(next)
+            return next
+        })
+    }
+
+    const onClearNetworkTracks = () => {
+        saveNetworkTracks([])
+        setNetworkTracks([])
+        setNetworkUrlInput('')
+        setNetworkTitleInput('')
+        setNetworkArtistInput('')
+        setNetworkAlbumInput('')
+        setNetworkCoverInput('')
+        setNetworkLyricInput('')
+        setIsNetworkPanelOpen(false)
+    }
+
     const onRemoveMusicDir = (dir: string) => {
         setMusicDirs(prev => {
             const next = prev.filter(item => item !== dir)
@@ -861,6 +1002,17 @@ export default function App() {
                     </button>
                     <button
                         type="button"
+                        className="titlebar-btn"
+                        onClick={() => setIsNetworkPanelOpen(prev => !prev)}
+                        ref={networkPanelToggleRef}
+                        data-tauri-drag-region={false}
+                        title="网络音乐"
+                    >
+                        <Globe size={14} />
+                        <span>网络音乐</span>
+                    </button>
+                    <button
+                        type="button"
                         className="titlebar-btn icon-only"
                         onClick={onMinimize}
                         data-tauri-drag-region={false}
@@ -920,6 +1072,65 @@ export default function App() {
                             关闭
                         </button>
                         <button type="button" onClick={onClearMusicDirs}>
+                            清空
+                        </button>
+                    </div>
+                </section>
+            )}
+
+            {isNetworkPanelOpen && (
+                <section className="path-panel network-panel" ref={networkPanelRef}>
+                    <p className="path-panel-title">网络音乐管理</p>
+                    <div className="network-panel-add">
+                        <input
+                            value={networkUrlInput}
+                            onChange={event => setNetworkUrlInput(event.target.value)}
+                            placeholder="音频 URL（http/https）"
+                        />
+                        <input
+                            value={networkTitleInput}
+                            onChange={event => setNetworkTitleInput(event.target.value)}
+                            placeholder="歌曲名（可选）"
+                        />
+                        <input
+                            value={networkArtistInput}
+                            onChange={event => setNetworkArtistInput(event.target.value)}
+                            placeholder="歌手（可选）"
+                        />
+                        <input
+                            value={networkAlbumInput}
+                            onChange={event => setNetworkAlbumInput(event.target.value)}
+                            placeholder="专辑（可选）"
+                        />
+                        <input
+                            value={networkCoverInput}
+                            onChange={event => setNetworkCoverInput(event.target.value)}
+                            placeholder="封面 URL（可选）"
+                        />
+                        <input
+                            value={networkLyricInput}
+                            onChange={event => setNetworkLyricInput(event.target.value)}
+                            placeholder="歌词 URL（可选）"
+                        />
+                        <button type="button" onClick={onAddNetworkTrack}>
+                            添加网络音乐
+                        </button>
+                    </div>
+                    <ul className="path-list">
+                        {networkTracks.map(track => (
+                            <li key={track.id}>
+                                <span title={`${track.title} (${track.streamUrl})`}>{track.title}</span>
+                                <button type="button" onClick={() => onRemoveNetworkTrack(track.id)}>
+                                    删除
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                    <div className="path-panel-actions">
+                        <button type="button" onClick={() => setIsNetworkPanelOpen(false)}>
+                            关闭
+                        </button>
+                        <button type="button" onClick={onClearNetworkTracks}>
                             清空
                         </button>
                     </div>
@@ -1012,7 +1223,9 @@ export default function App() {
                             />
                         </div>
                     )}
-                    {desktopMode && musicDirs.length === 0 && <p className="muted">当前仅显示服务器歌曲，可在标题栏添加本地目录</p>}
+                    {desktopMode && musicDirs.length === 0 && networkTracks.length === 0 && (
+                        <p className="muted">当前仅显示服务器歌曲，可在标题栏添加本地目录或网络音乐</p>
+                    )}
                     {isLoading && <p className="muted">正在加载歌曲...</p>}
                     {error && <p className="error">{error}</p>}
                     {!isLoading && !error && tracks.length === 0 && <p className="muted">未扫描到歌曲文件</p>}
@@ -1112,6 +1325,17 @@ export default function App() {
                                 }}
                             >
                                 下载歌曲
+                            </button>
+                        )}
+                        {isNetworkTrack(contextTrack) && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onRemoveNetworkTrack(contextTrack.id)
+                                    setContextMenu(null)
+                                }}
+                            >
+                                删除歌曲
                             </button>
                         )}
                     </div>,
