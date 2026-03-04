@@ -55,7 +55,7 @@ fn first_existing_path(candidates: &[PathBuf]) -> Option<String> {
         .map(|path| path.to_string())
 }
 
-fn infer_cover_path(audio_path: &Path) -> Option<String> {
+fn infer_track_cover_path(audio_path: &Path) -> Option<String> {
     let parent = audio_path.parent()?;
     let stem = audio_path.file_stem()?.to_str()?;
     let ext_candidates = ["jpg", "jpeg", "png", "webp"];
@@ -66,7 +66,15 @@ fn infer_cover_path(audio_path: &Path) -> Option<String> {
         candidates.push(parent.join(format!("{stem}.cover.{ext}")));
     }
 
+    first_existing_path(&candidates)
+}
+
+fn infer_shared_cover_path(audio_path: &Path) -> Option<String> {
+    let parent = audio_path.parent()?;
+    let ext_candidates = ["jpg", "jpeg", "png", "webp"];
     let cover_names = ["cover", "folder", "front", "album", "AlbumArtSmall"];
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
     for name in cover_names {
         for ext in ext_candidates {
             candidates.push(parent.join(format!("{name}.{ext}")));
@@ -465,7 +473,9 @@ fn scan_music_dirs(music_dirs: Vec<String>) -> Result<Vec<DesktopScannedTrack>, 
                 album: "Unknown Album".to_string(),
                 duration: 0.0,
                 file_path: absolute_str.clone(),
-                cover_path: infer_cover_path(&absolute).or_else(|| infer_embedded_cover_path(&absolute)),
+                cover_path: infer_track_cover_path(&absolute)
+                    .or_else(|| infer_embedded_cover_path(&absolute))
+                    .or_else(|| infer_shared_cover_path(&absolute)),
                 lyric_path: infer_lyric_path(&absolute),
             })
         })

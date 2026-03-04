@@ -16,6 +16,7 @@ apps/
   backend/server
   frontend/website
   frontend/destop   # keep current folder name: "destop"
+  frontend/mobile
 packages/
 doc/
 music/              # sample local music directory
@@ -45,6 +46,9 @@ pnpm --filter @baize/server dev
 # web
 pnpm --filter @baize/website dev
 
+# mobile (Expo)
+pnpm --filter @baize/mobile dev
+
 # desktop (Tauri)
 pnpm --filter @baize/destop tauri:dev
 ```
@@ -57,6 +61,9 @@ pnpm dev
 
 # server + website + desktop (vite)
 pnpm dev:all
+
+# server + mobile
+pnpm dev:mobile
 
 # server + desktop (vite)
 pnpm dev:desktop
@@ -89,6 +96,13 @@ pnpm dev:tauri
 -   Download list popup with task status, progress, and saved path
 -   Refresh button for track list with playback-preserving behavior
 
+### Mobile app (React Native + Expo)
+
+-   Shared track type/contracts (`@baize/types`)
+-   Connects to backend `/api/tracks`
+-   Basic list + play/pause + prev/next
+-   Support custom API endpoint via `EXPO_PUBLIC_API_BASE_URL`
+
 ## Local Filename Rule
 
 Recommended local file naming:
@@ -120,3 +134,4 @@ cargo check --manifest-path apps/frontend/destop/src-tauri/Cargo.toml
 -   `doc/website-to-tauri-migration.md`
 -   `doc/latest-feature-updates.md`
 -   `doc/desktop-latest-updates.md`
+-   `doc/mobile-latest-updates.md`

@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "\u767d\u6cfd\u97f3\u4e50",
+    "slug": "baize-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#111827"
+      },
+      "package": "com.anonymous.baizemobile"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

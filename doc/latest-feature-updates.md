@@ -91,3 +91,57 @@ This document summarizes the latest implementation updates in the music player.
 
 -   `apps/frontend/website/src/App.tsx`
 -   `apps/frontend/website/src/styles.css`
+
+## 2026-03-03 Incremental Update (Mobile Lyric + Play Mode)
+
+### Mobile Sync
+
+-   Synced desktop lyric display capability to mobile (`React Native + Expo`):
+    -   load `lyricUrl`
+    -   parse LRC
+    -   active-line highlight
+    -   auto-scroll to active line
+-   Synced desktop play mode behavior to mobile:
+    -   sequential
+    -   random
+    -   single loop
+-   Mobile playback end and prev/next now respect current play mode.
+
+### Files Updated
+
+-   `apps/frontend/mobile/App.tsx`
+-   `doc/mobile-latest-updates.md`
+
+## 2026-03-03 Incremental Update (Mobile Queue Sync)
+
+### Mobile Sync
+
+-   Synced desktop custom queue behavior to mobile:
+    -   queue-first playback (`custom queue -> full list fallback`)
+    -   queue-based prev/next and auto-next
+    -   sequential/random/single modes now work on effective queue
+-   Added mobile queue management actions:
+    -   add to queue from track list
+    -   play queue item
+    -   remove queue item
+    -   clear queue
+
+### Files Updated
+
+-   `apps/frontend/mobile/App.tsx`
+-   `doc/mobile-latest-updates.md`
+
+## 2026-03-03 Incremental Update (Android Build Stability)
+
+### Mobile Fix
+
+-   Fixed Android native build failure in `expo-av` on Windows:
+    -   failure signature: `ninja: error: manifest 'build.ninja' still dirty after 100 tries`
+-   Applied persistent pnpm patch to `expo-av@15.0.2`:
+    -   `patches/expo-av@15.0.2.patch`
+    -   adds `set(CMAKE_SUPPRESS_REGENERATION ON)` in `expo-av/android/CMakeLists.txt`
+-   Registered patch in root `package.json` under `pnpm.patchedDependencies`.
+
+### Verification
+
+-   Re-ran full Android build with the same parameters as failing command and confirmed `BUILD SUCCESSFUL`.

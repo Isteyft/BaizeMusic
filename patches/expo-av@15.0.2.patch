@@ -1,0 +1,13 @@
+diff --git a/android/CMakeLists.txt b/android/CMakeLists.txt
+index 68653e2f3c5217f2fbb81e22c2f51cbd00f88fbb..440746d5316ec2e6116f0ab16a86f7a9a7226b9e 100644
+--- a/android/CMakeLists.txt
++++ b/android/CMakeLists.txt
+@@ -1,5 +1,8 @@
+ cmake_minimum_required(VERSION 3.4.1)
+ 
++# Work around Windows + Ninja regeneration loops ("build.ninja still dirty after 100 tries").
++set(CMAKE_SUPPRESS_REGENERATION ON)
++
+ project(expo-av)
+ 
+ set (CMAKE_VERBOSE_MAKEFILE ON)

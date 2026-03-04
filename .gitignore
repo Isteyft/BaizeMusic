@@ -37,3 +37,5 @@ dist-ssr
 .devcontainer/postgresql_data
 *.mp3
 apps/frontend/destop/src-tauri/target/*
+apps/frontend/mobile/android/*
+apps\frontend\mobile\android key/*

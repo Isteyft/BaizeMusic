@@ -8,3 +8,8 @@ Prefixs
 rgba
 tauri
 unlisten
+Pressable
+Synchsafe
+APIC
+Millis
+albumartsmall
