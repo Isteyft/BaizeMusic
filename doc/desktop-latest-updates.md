@@ -164,3 +164,31 @@ This document summarizes the recent desktop-side updates in `apps/frontend/desto
 ### Validation
 
 -   `pnpm --filter @baize/destop typecheck`
+
+## 2026-03-05 Incremental Update (Playback State Persistence)
+
+### New Features
+
+-   Added desktop playback state persistence via localStorage:
+    -   key: `baize_desktop_playback_state`
+    -   stores `trackId` and `currentTime`
+-   Added desktop play mode persistence via localStorage:
+    -   key: `baize_desktop_play_mode`
+    -   stores mode value: `sequential | random | single`
+-   Added desktop playlist persistence via localStorage:
+    -   key: `baize_desktop_playlist`
+    -   stores `playlistTrackIds` array
+
+### Restore Behavior
+
+-   On app startup, the player now restores last track and playback position when track exists.
+-   Seek restore is applied after `loadedmetadata` to avoid invalid early seek.
+-   Restored playlist ids are filtered against current track map to remove stale/missing ids.
+
+### Files Updated
+
+-   `apps/frontend/destop/src/App.tsx`
+
+### Validation
+
+-   `pnpm --filter @baize/destop typecheck`

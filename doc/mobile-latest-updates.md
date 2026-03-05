@@ -396,3 +396,40 @@ pnpm --filter @baize/mobile dev
 
 -   `apps/frontend/mobile/App.tsx`
 -   `doc/mobile-latest-updates.md`
+
+## 2026-03-05 Incremental Update (Persistence Fix For App Restart)
+
+### Problem
+
+-   Mobile playback persistence did not survive full app restart in some cases.
+-   Root cause:
+    -   imported local/network track ids were generated with random suffixes.
+    -   after restart, regenerated ids no longer matched saved `playbackState.trackId` and `playlistTrackIds`.
+
+### Fix
+
+-   Replaced random imported track ids with stable ids derived from source key:
+    -   local track: hash from `uri`
+    -   network track: hash from `url`
+-   Extended playback persistence payload:
+    -   added `trackStreamUrl` to `playbackState`
+-   Added restore fallback strategy:
+    -   first match by `trackId`
+    -   if not found, fallback to `streamUrl` match
+
+### Result
+
+-   After full app close and reopen, the following can be restored reliably:
+    -   current track
+    -   playback position
+    -   play mode
+    -   custom playlist
+
+### Files Updated In This Round
+
+-   `apps/frontend/mobile/App.tsx`
+-   `doc/mobile-latest-updates.md`
+
+### Validation
+
+-   `pnpm --filter @baize/mobile typecheck`

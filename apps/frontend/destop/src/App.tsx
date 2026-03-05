@@ -33,6 +33,9 @@ import { createPortal } from 'react-dom'
 const VOLUME_STORAGE_KEY = 'baize_player_volume'
 const DESKTOP_MUSIC_DIRS_KEY = 'baize_desktop_music_dirs'
 const DESKTOP_NETWORK_TRACKS_KEY = 'baize_desktop_network_tracks'
+const DESKTOP_PLAY_MODE_KEY = 'baize_desktop_play_mode'
+const DESKTOP_PLAYLIST_KEY = 'baize_desktop_playlist'
+const DESKTOP_PLAYBACK_STATE_KEY = 'baize_desktop_playback_state'
 
 type PlayMode = 'sequential' | 'random' | 'single'
 
@@ -73,6 +76,11 @@ interface DownloadProgressPayload {
     status: DownloadTaskStatus
     filePath?: string
     error?: string
+}
+
+interface StoredPlaybackState {
+    trackId: string
+    currentTime: number
 }
 
 function readStoredVolume(): number {
@@ -161,6 +169,65 @@ function saveNetworkTracks(tracks: Track[]) {
     window.localStorage.setItem(DESKTOP_NETWORK_TRACKS_KEY, JSON.stringify(normalized))
 }
 
+function readStoredPlayMode(): PlayMode {
+    const raw = window.localStorage.getItem(DESKTOP_PLAY_MODE_KEY)
+    if (raw === 'random' || raw === 'single' || raw === 'sequential') {
+        return raw
+    }
+    return 'sequential'
+}
+
+function savePlayMode(mode: PlayMode) {
+    window.localStorage.setItem(DESKTOP_PLAY_MODE_KEY, mode)
+}
+
+function readStoredPlaylistTrackIds(): string[] {
+    const raw = window.localStorage.getItem(DESKTOP_PLAYLIST_KEY)
+    if (!raw) {
+        return []
+    }
+    try {
+        const parsed = JSON.parse(raw) as unknown
+        if (!Array.isArray(parsed)) {
+            return []
+        }
+        return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    } catch {
+        return []
+    }
+}
+
+function savePlaylistTrackIds(trackIds: string[]) {
+    window.localStorage.setItem(DESKTOP_PLAYLIST_KEY, JSON.stringify(trackIds))
+}
+
+function readStoredPlaybackState(): StoredPlaybackState | null {
+    const raw = window.localStorage.getItem(DESKTOP_PLAYBACK_STATE_KEY)
+    if (!raw) {
+        return null
+    }
+    try {
+        const parsed = JSON.parse(raw) as Partial<StoredPlaybackState> | null
+        if (!parsed || typeof parsed.trackId !== 'string') {
+            return null
+        }
+        const nextTime = Number(parsed.currentTime)
+        if (!Number.isFinite(nextTime) || nextTime < 0) {
+            return null
+        }
+        return {
+            trackId: parsed.trackId,
+            currentTime: nextTime,
+        }
+    } catch {
+        return null
+    }
+}
+
+function savePlaybackState(state: StoredPlaybackState) {
+    window.localStorage.setItem(DESKTOP_PLAYBACK_STATE_KEY, JSON.stringify(state))
+}
+
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value))
 }
@@ -177,6 +244,9 @@ export default function App() {
     const networkPanelRef = useRef<HTMLDivElement>(null)
     const networkPanelToggleRef = useRef<HTMLButtonElement>(null)
     const loadedTrackKeyRef = useRef<string | null>(null)
+    const storedPlaybackStateRef = useRef<StoredPlaybackState | null>(readStoredPlaybackState())
+    const restoredPlaybackRef = useRef(false)
+    const pendingSeekTimeRef = useRef<number | null>(null)
 
     const [duration, setDuration] = useState(0)
     const [currentTime, setCurrentTime] = useState(0)
@@ -192,10 +262,10 @@ export default function App() {
     const [lyricLoading, setLyricLoading] = useState(false)
     const [lyricError, setLyricError] = useState<string | null>(null)
     const [coverFailed, setCoverFailed] = useState(false)
-    const [playlistTrackIds, setPlaylistTrackIds] = useState<string[]>([])
+    const [playlistTrackIds, setPlaylistTrackIds] = useState<string[]>(() => readStoredPlaylistTrackIds())
     const [isPlaylistOpen, setIsPlaylistOpen] = useState(false)
     const [contextMenu, setContextMenu] = useState<TrackContextMenu | null>(null)
-    const [playMode, setPlayMode] = useState<PlayMode>('sequential')
+    const [playMode, setPlayMode] = useState<PlayMode>(() => readStoredPlayMode())
     const [isPathMenuOpen, setIsPathMenuOpen] = useState(false)
     const [musicDirs, setMusicDirs] = useState<string[]>(() => readStoredMusicDirs())
     const [musicDirInput, setMusicDirInput] = useState('')
@@ -245,8 +315,11 @@ export default function App() {
     }, [])
 
     useEffect(() => {
+        if (tracks.length === 0) {
+            return
+        }
         setPlaylistTrackIds(prev => prev.filter(trackId => trackMap.has(trackId)))
-    }, [trackMap])
+    }, [tracks.length, trackMap])
 
     useEffect(() => {
         let cancelled = false
@@ -294,9 +367,22 @@ export default function App() {
                 const mergedTracks = [...serverTracks, ...localTracks, ...networkTracks]
                 if (!cancelled) {
                     const currentTrackId = currentTrack?.id
-                    const preservedIndex = currentTrackId ? mergedTracks.findIndex(track => track.id === currentTrackId) : -1
+                    const storedPlaybackState = storedPlaybackStateRef.current
+                    const shouldRestorePlayback = !restoredPlaybackRef.current && !!storedPlaybackState
+                    const preservedIndex = shouldRestorePlayback
+                        ? mergedTracks.findIndex(track => track.id === storedPlaybackState.trackId)
+                        : currentTrackId
+                          ? mergedTracks.findIndex(track => track.id === currentTrackId)
+                          : -1
                     setTracks(mergedTracks)
                     setCurrentIndex(preservedIndex >= 0 ? preservedIndex : 0)
+                    if (shouldRestorePlayback && mergedTracks.length > 0) {
+                        restoredPlaybackRef.current = true
+                        if (preservedIndex >= 0 && storedPlaybackState.currentTime > 0) {
+                            pendingSeekTimeRef.current = storedPlaybackState.currentTime
+                            setCurrentTime(storedPlaybackState.currentTime)
+                        }
+                    }
                     if (mergedTracks.length === 0) {
                         if (desktopMode) {
                             if (localError) {
@@ -422,6 +508,24 @@ export default function App() {
             audio.muted = isMuted
         }
     }, [isMuted])
+
+    useEffect(() => {
+        savePlayMode(playMode)
+    }, [playMode])
+
+    useEffect(() => {
+        savePlaylistTrackIds(playlistTrackIds)
+    }, [playlistTrackIds])
+
+    useEffect(() => {
+        if (!currentTrack) {
+            return
+        }
+        savePlaybackState({
+            trackId: currentTrack.id,
+            currentTime: Math.max(0, currentTime),
+        })
+    }, [currentTrack?.id, currentTime])
 
     useEffect(() => {
         if (!contextMenu) {
@@ -790,7 +894,15 @@ export default function App() {
     const onLoadedMetadata = () => {
         const audio = audioRef.current
         if (audio) {
-            setDuration(audio.duration || 0)
+            const nextDuration = audio.duration || 0
+            setDuration(nextDuration)
+            const pendingTime = pendingSeekTimeRef.current
+            if (pendingTime !== null) {
+                const nextTime = Math.min(Math.max(pendingTime, 0), nextDuration || pendingTime)
+                audio.currentTime = nextTime
+                setCurrentTime(nextTime)
+                pendingSeekTimeRef.current = null
+            }
         }
     }
 

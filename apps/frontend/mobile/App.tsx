@@ -35,6 +35,9 @@ const SETTINGS_FILENAME = 'baize-mobile-settings.json'
 type MobileSettings = {
     directoryUris: string[]
     networkTracks: NetworkTrackSetting[]
+    playMode: PlayMode
+    playlistTrackIds: string[]
+    playbackState: MobilePlaybackState | null
 }
 
 type NetworkTrackSetting = {
@@ -42,6 +45,12 @@ type NetworkTrackSetting = {
     title?: string
     artist?: string
     lyricUrl?: string
+}
+
+type MobilePlaybackState = {
+    trackId: string
+    trackStreamUrl?: string
+    positionMs: number
 }
 
 function resolveApiBaseUrl() {
@@ -83,10 +92,19 @@ function getFileExtension(input: string) {
     return ext.toLowerCase()
 }
 
+function createStableTrackId(prefix: 'local' | 'network', key: string) {
+    let hash = 2166136261
+    for (let i = 0; i < key.length; i += 1) {
+        hash ^= key.charCodeAt(i)
+        hash = Math.imul(hash, 16777619)
+    }
+    return `${prefix}-${(hash >>> 0).toString(36)}`
+}
+
 function createLocalTrack(uri: string, displayName?: string, coverUrl?: string): Track {
     const title = displayName ? displayName.replace(/\.[^.]+$/, '') : getFileBaseName(uri)
     return {
-        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: createStableTrackId('local', uri),
         title,
         artist: '本地文件',
         album: '本地导入',
@@ -344,11 +362,45 @@ function normalizeNetworkTrackSettings(input: unknown): NetworkTrackSetting[] {
     return normalizedItems
 }
 
+function normalizePlayMode(input: unknown): PlayMode {
+    if (input === 'random' || input === 'single' || input === 'sequential') {
+        return input
+    }
+    return 'sequential'
+}
+
+function normalizePlaylistTrackIds(input: unknown): string[] {
+    if (!Array.isArray(input)) return []
+    const unique = new Set<string>()
+    for (const item of input) {
+        if (typeof item !== 'string') continue
+        const normalized = item.trim()
+        if (!normalized) continue
+        unique.add(normalized)
+    }
+    return Array.from(unique)
+}
+
+function normalizePlaybackState(input: unknown): MobilePlaybackState | null {
+    if (!input || typeof input !== 'object') return null
+    const candidate = input as { trackId?: unknown; trackStreamUrl?: unknown; positionMs?: unknown }
+    const trackId = typeof candidate.trackId === 'string' ? candidate.trackId.trim() : ''
+    if (!trackId) return null
+    const trackStreamUrl = typeof candidate.trackStreamUrl === 'string' ? candidate.trackStreamUrl.trim() : ''
+    const positionMs = Number(candidate.positionMs)
+    if (!Number.isFinite(positionMs) || positionMs < 0) return null
+    return {
+        trackId,
+        trackStreamUrl: trackStreamUrl || undefined,
+        positionMs,
+    }
+}
+
 function createNetworkTrack(input: NetworkTrackSetting): Track {
     const title = input.title?.trim() || getFileBaseName(input.url) || '网络音乐'
     const artist = input.artist?.trim() || '网络音乐'
     return {
-        id: `network-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: createStableTrackId('network', input.url),
         title,
         artist,
         album: '网络导入',
@@ -364,26 +416,61 @@ function isUserImportedTrack(track: Track) {
 
 async function loadMobileSettings(): Promise<MobileSettings> {
     const uri = getSettingsFileUri()
-    if (!uri) return { directoryUris: [], networkTracks: [] }
+    if (!uri) {
+        return {
+            directoryUris: [],
+            networkTracks: [],
+            playMode: 'sequential',
+            playlistTrackIds: [],
+            playbackState: null,
+        }
+    }
     try {
         const info = await FileSystem.getInfoAsync(uri)
-        if (!info.exists) return { directoryUris: [], networkTracks: [] }
+        if (!info.exists) {
+            return {
+                directoryUris: [],
+                networkTracks: [],
+                playMode: 'sequential',
+                playlistTrackIds: [],
+                playbackState: null,
+            }
+        }
         const raw = await FileSystem.readAsStringAsync(uri)
-        const parsed = JSON.parse(raw) as { directoryUris?: unknown; networkTracks?: unknown; networkTrackUrls?: unknown }
+        const parsed = JSON.parse(raw) as {
+            directoryUris?: unknown
+            networkTracks?: unknown
+            networkTrackUrls?: unknown
+            playMode?: unknown
+            playlistTrackIds?: unknown
+            playbackState?: unknown
+        }
         const networkTracks = normalizeNetworkTrackSettings(parsed.networkTracks)
         if (networkTracks.length === 0) {
             const legacy = normalizeNetworkTrackUrls(parsed.networkTrackUrls).map(url => ({ url }))
             return {
                 directoryUris: normalizeDirectoryUris(parsed.directoryUris),
                 networkTracks: legacy,
+                playMode: normalizePlayMode(parsed.playMode),
+                playlistTrackIds: normalizePlaylistTrackIds(parsed.playlistTrackIds),
+                playbackState: normalizePlaybackState(parsed.playbackState),
             }
         }
         return {
             directoryUris: normalizeDirectoryUris(parsed.directoryUris),
             networkTracks,
+            playMode: normalizePlayMode(parsed.playMode),
+            playlistTrackIds: normalizePlaylistTrackIds(parsed.playlistTrackIds),
+            playbackState: normalizePlaybackState(parsed.playbackState),
         }
     } catch {
-        return { directoryUris: [], networkTracks: [] }
+        return {
+            directoryUris: [],
+            networkTracks: [],
+            playMode: 'sequential',
+            playlistTrackIds: [],
+            playbackState: null,
+        }
     }
 }
 
@@ -394,6 +481,9 @@ async function saveMobileSettings(settings: MobileSettings) {
         {
             directoryUris: normalizeDirectoryUris(settings.directoryUris),
             networkTracks: normalizeNetworkTrackSettings(settings.networkTracks),
+            playMode: normalizePlayMode(settings.playMode),
+            playlistTrackIds: normalizePlaylistTrackIds(settings.playlistTrackIds),
+            playbackState: normalizePlaybackState(settings.playbackState),
         },
         null,
         2
@@ -407,6 +497,9 @@ export default function App() {
     const playModeRef = useRef<PlayMode>('sequential')
     const effectiveQueueIdsRef = useRef<string[]>([])
     const trackMapRef = useRef<Map<string, { track: Track; index: number }>>(new Map())
+    const restoredPlaybackStateRef = useRef<MobilePlaybackState | null>(null)
+    const hasRestoredPlaybackRef = useRef(false)
+    const lastSavedPlaybackRef = useRef<MobilePlaybackState | null>(null)
     const menuAnim = useRef(new Animated.Value(0)).current
     const recordSpinAnim = useRef(new Animated.Value(0)).current
     const recordSpinLoopRef = useRef<Animated.CompositeAnimation | null>(null)
@@ -530,8 +623,9 @@ export default function App() {
     }, [])
 
     useEffect(() => {
+        if (tracks.length === 0) return
         setPlaylistTrackIds(prev => prev.filter(trackId => trackMap.has(trackId)))
-    }, [trackMap])
+    }, [tracks.length, trackMap])
 
     useEffect(() => {
         let cancelled = false
@@ -695,15 +789,17 @@ export default function App() {
         return prevTrack ? prevTrack.index : null
     }
 
-    const playTrack = async (index: number) => {
+    const playTrack = async (index: number, options?: { startPositionMs?: number; shouldPlay?: boolean }) => {
         const track = tracks[index]
         if (!track) return
 
+        const startPositionMs = Math.max(0, Math.floor(options?.startPositionMs ?? 0))
+        const shouldPlay = options?.shouldPlay ?? true
         setCurrentIndex(index)
-        setPositionMs(0)
+        setPositionMs(startPositionMs)
         setDurationMs(0)
         setIsSeeking(false)
-        setSeekPreviewMs(0)
+        setSeekPreviewMs(startPositionMs)
         setError(null)
         try {
             if (soundRef.current) {
@@ -711,31 +807,35 @@ export default function App() {
                 soundRef.current = null
             }
 
-            const { sound } = await Audio.Sound.createAsync({ uri: track.streamUrl }, { shouldPlay: true }, status => {
-                if (!status.isLoaded) return
-                const loaded = status as AVPlaybackStatusSuccess
-                setIsPlaying(loaded.isPlaying)
-                if (!isSeeking) {
-                    setPositionMs(loaded.positionMillis)
-                }
-                setDurationMs(loaded.durationMillis ?? 0)
-                if (loaded.didJustFinish) {
-                    const next = resolveNextTrackIndex(
-                        currentIndexRef.current,
-                        playModeRef.current,
-                        effectiveQueueIdsRef.current,
-                        trackMapRef.current
-                    )
-                    if (next !== null) {
-                        void playTrack(next)
-                    } else {
-                        setIsPlaying(false)
+            const { sound } = await Audio.Sound.createAsync(
+                { uri: track.streamUrl },
+                { shouldPlay, positionMillis: startPositionMs },
+                status => {
+                    if (!status.isLoaded) return
+                    const loaded = status as AVPlaybackStatusSuccess
+                    setIsPlaying(loaded.isPlaying)
+                    if (!isSeeking) {
+                        setPositionMs(loaded.positionMillis)
+                    }
+                    setDurationMs(loaded.durationMillis ?? 0)
+                    if (loaded.didJustFinish) {
+                        const next = resolveNextTrackIndex(
+                            currentIndexRef.current,
+                            playModeRef.current,
+                            effectiveQueueIdsRef.current,
+                            trackMapRef.current
+                        )
+                        if (next !== null) {
+                            void playTrack(next)
+                        } else {
+                            setIsPlaying(false)
+                        }
                     }
                 }
-            })
+            )
 
             soundRef.current = sound
-            setIsPlaying(true)
+            setIsPlaying(shouldPlay)
         } catch (err: unknown) {
             setError(toUserFriendlyError(err, '播放失败，请稍后重试'))
             setIsPlaying(false)
@@ -744,7 +844,7 @@ export default function App() {
 
     const togglePlayPause = async () => {
         if (!soundRef.current) {
-            if (currentIndex >= 0) await playTrack(currentIndex)
+            if (currentIndex >= 0) await playTrack(currentIndex, { startPositionMs: positionMs, shouldPlay: true })
             return
         }
         const status = await soundRef.current.getStatusAsync()
@@ -990,6 +1090,10 @@ export default function App() {
             if (cancelled) return
             setDirectoryUris(settings.directoryUris)
             setNetworkTracks(settings.networkTracks)
+            setPlayMode(settings.playMode)
+            setPlaylistTrackIds(settings.playlistTrackIds)
+            restoredPlaybackStateRef.current = settings.playbackState
+            lastSavedPlaybackRef.current = settings.playbackState
 
             const { imported, readableDirectoryUris } = await importFromDirectoryUris(settings.directoryUris)
             if (cancelled) return
@@ -1013,10 +1117,61 @@ export default function App() {
 
     useEffect(() => {
         if (!settingsHydrated) return
-        void saveMobileSettings({ directoryUris, networkTracks }).catch(() => {
+        void saveMobileSettings({
+            directoryUris,
+            networkTracks,
+            playMode,
+            playlistTrackIds,
+            playbackState: lastSavedPlaybackRef.current,
+        }).catch(() => {
             setError(prev => prev ?? '目录配置保存失败')
         })
-    }, [directoryUris, networkTracks, settingsHydrated])
+    }, [directoryUris, networkTracks, playMode, playlistTrackIds, settingsHydrated])
+
+    useEffect(() => {
+        if (!settingsHydrated || hasRestoredPlaybackRef.current || tracks.length === 0) return
+        hasRestoredPlaybackRef.current = true
+
+        const restored = restoredPlaybackStateRef.current
+        if (!restored) return
+
+        const foundById = trackMap.get(restored.trackId)
+        const foundByUrl =
+            restored.trackStreamUrl && !foundById ? tracks.findIndex(track => track.streamUrl === restored.trackStreamUrl) : -1
+        const found = foundById ?? (foundByUrl >= 0 ? { track: tracks[foundByUrl], index: foundByUrl } : undefined)
+        if (!found) return
+
+        setCurrentIndex(found.index)
+        const restoredPositionMs = Math.max(0, Math.floor(restored.positionMs))
+        setPositionMs(restoredPositionMs)
+        setSeekPreviewMs(restoredPositionMs)
+    }, [settingsHydrated, tracks.length, trackMap])
+
+    useEffect(() => {
+        if (!settingsHydrated || !currentTrack) return
+        const normalizedPosition = Math.max(0, Math.floor(positionMs))
+        const previous = lastSavedPlaybackRef.current
+        const changedTrack = !previous || previous.trackId !== currentTrack.id
+        const changedEnough = !previous || Math.abs(normalizedPosition - previous.positionMs) >= 5000
+        const shouldSave = changedTrack || changedEnough || !isPlaying
+        if (!shouldSave) return
+
+        const nextPlaybackState: MobilePlaybackState = {
+            trackId: currentTrack.id,
+            trackStreamUrl: currentTrack.streamUrl,
+            positionMs: normalizedPosition,
+        }
+        lastSavedPlaybackRef.current = nextPlaybackState
+        void saveMobileSettings({
+            directoryUris,
+            networkTracks,
+            playMode,
+            playlistTrackIds,
+            playbackState: nextPlaybackState,
+        }).catch(() => {
+            setError(prev => prev ?? '播放状态保存失败')
+        })
+    }, [settingsHydrated, currentTrack?.id, positionMs, isPlaying, directoryUris, networkTracks, playMode, playlistTrackIds])
 
     const openMenu = () => {
         setMenuVisible(true)
